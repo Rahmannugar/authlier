@@ -45,6 +45,32 @@ verification, err := password.VerifyWithAlgorithm(
 Applications remain responsible for password policy. Passwords and password
 hashes must never be logged.
 
+## Tokens and sessions
+
+Authlier supports two application-selected credential models:
+
+- Opaque server-side sessions through `sessiontoken`.
+- Ed25519 JWT access tokens through `accesstoken`, paired with rotating opaque
+  refresh tokens through `refreshtoken`.
+
+The `token` package generates 256-bit opaque tokens and hashes them for durable
+storage. Applications persist only token hashes.
+
+The session-token package defines storage-neutral durable and cache contracts
+for creation, resolution, rotation, expiry, and revocation. Cache misses and
+cache outages fall back to durable storage. Optional session extension is
+disabled unless an extension threshold and absolute lifetime are configured.
+
+Access-token verification checks the signature, signing algorithm, key ID,
+issuer, audience, timing claims, session ID, and subject. It also resolves the
+durable session so revocation is not deferred until JWT expiry.
+
+Refresh tokens retain their original absolute expiry across rotation. Reusing
+a rotated token must atomically revoke its durable session and every attached
+refresh token. Concrete adapters must preserve the package contracts.
+
+Raw bearer tokens must never be persisted or logged.
+
 ## Security
 
 Security reports should be submitted privately according to
