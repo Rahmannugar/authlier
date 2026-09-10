@@ -1,40 +1,88 @@
 # Architecture
 
-Authlier is organized around authentication capabilities. Each capability owns
-its security rules, state transitions, and public contract. Applications compose
-the capabilities they need and retain control of product authorization.
+## Purpose
 
-The core is independent of HTTP frameworks and infrastructure products.
-Integration boundaries use narrow behavioral interfaces. Database, cache, mail,
-telemetry, and identity-provider adapters implement those interfaces without
-becoming dependencies of authentication behavior.
+Authlier is a framework-neutral authentication library. Applications compose
+the capabilities they need and provide their own persistence, cache, delivery,
+and telemetry adapters.
 
-Persistence support is behavioral rather than nominal. An adapter must preserve
-the uniqueness, atomicity, expiry, single-use, concurrency, rotation, and
-revocation guarantees required by the capability it serves. SQL, NoSQL, and
-cache products can be supported through separate adapters without changing the
-core contracts.
+Authlier establishes identity. The application owns roles, permissions,
+tenancy, billing, and every other authorization decision.
 
-The token package generates 256-bit opaque credentials and exposes only their
-hashes to persistence boundaries. Raw session and refresh tokens exist only at
-issuance and presentation.
+## Package structure
 
-Applications can use opaque server-side session tokens or short-lived JWT
-access tokens with rotating opaque refresh tokens. Opaque sessions use durable
-state as authority and may use a bounded cache with durable fallback. Session
-extension is optional, threshold-based, and capped by an absolute lifetime.
+```text
+authlier/
+  accesstoken/   Ed25519 JWT access-token issuance and verification
+  password/      Argon2id and bcrypt password hashing
+  refreshtoken/  Opaque refresh-token rotation and reuse detection
+  sessiontoken/  Opaque server-side session lifecycle and caching
+  token/         Opaque token generation and hashing
+```
 
-JWT access tokens use Ed25519 signatures, explicit issuer and audience checks,
-key identifiers, bounded lifetimes, and durable session resolution. Refresh
-tokens rotate atomically. Reuse revokes their durable session and every refresh
-token attached to it.
+## Credential models
 
-The password capability supports Argon2id and bcrypt behind one API. Argon2id is
-the default. Hashes identify their algorithm and parameters, allowing
-verification to select the correct implementation and identify hashes that
-should migrate to the configured preference. Untrusted Argon2id parameters are
-bounded before memory or CPU work begins.
+Applications choose one of two models.
 
-Authentication establishes identity. Roles, permissions, policies, tenancy,
-and other application authorization remain the responsibility of the
-integrating application.
+### Opaque sessions
+
+```text
+raw session token
+  -> token hash
+  -> bounded cache
+  -> durable session store
+  -> authenticated subject
+```
+
+Only the hash reaches storage. Durable state owns creation, expiry, extension,
+rotation, and revocation. Cache misses and cache failures fall back to the
+durable store.
+
+Session extension is disabled by default. When enabled, an active session may
+extend after a configured threshold but never beyond its absolute lifetime.
+
+### JWT access and refresh tokens
+
+```text
+JWT access token
+  -> Ed25519 signature and claim validation
+  -> durable session resolution
+  -> authenticated subject
+
+opaque refresh token
+  -> token hash
+  -> atomic rotation
+  -> replacement refresh token
+```
+
+Access tokens validate their algorithm, key ID, issuer, audience, timing
+claims, session ID, and subject. Durable session resolution makes revocation
+observable before JWT expiry.
+
+Refresh tokens keep their original absolute expiry. Reuse invalidates the
+durable session and all refresh tokens attached to it.
+
+## Passwords
+
+Argon2id is the default password algorithm. Bcrypt is available for compatible
+applications and migrations. Stored hashes identify their algorithm and work
+parameters. Verification reports when a matching hash should be replaced.
+
+Untrusted Argon2id parameters are bounded before expensive work begins.
+
+## Persistence and caching
+
+Core packages depend on behavioral interfaces, not databases or cache
+products. Adapters must preserve uniqueness, atomic rotation, single use,
+expiry, revocation, and safe concurrent updates.
+
+A database is supported only after its adapter has proved those guarantees
+against the real database. A cache is never the durable session authority.
+
+## Security boundaries
+
+Raw passwords and bearer tokens must not be logged. Raw opaque tokens must not
+be persisted. JWT signing keys remain application-managed secrets.
+
+Authlier does not depend on an HTTP framework. The host owns cookie policy,
+CSRF protection, rate limiting, request handling, and authorization.

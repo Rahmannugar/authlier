@@ -8,6 +8,14 @@ Authlier is an authentication library for Go applications. It provides secure au
 go get github.com/Rahmannugar/authlier
 ```
 
+## Architecture
+
+Authlier is organized as composable capability packages. Applications select
+opaque server-side sessions or JWT access tokens with opaque refresh tokens,
+then provide the required persistence and cache adapters. See
+[`ARCHITECTURE.md`](ARCHITECTURE.md) for the package tree, runtime flows, and
+security boundaries.
+
 ## Passwords
 
 The password package supports Argon2id and bcrypt. Argon2id is the default.
