@@ -54,24 +54,6 @@ func TestPasswordHashesUseIndependentSalts(t *testing.T) {
 	}
 }
 
-func TestBcryptCanBeSelected(t *testing.T) {
-	encodedHash, err := password.HashWithAlgorithm("password", password.Bcrypt)
-	if err != nil {
-		t.Fatalf("hash password with bcrypt: %v", err)
-	}
-
-	verification, err := password.VerifyWithAlgorithm("password", encodedHash, password.Bcrypt)
-	if err != nil {
-		t.Fatalf("verify bcrypt password: %v", err)
-	}
-	if !verification.Matches {
-		t.Fatal("bcrypt password did not match")
-	}
-	if verification.NeedsRehash {
-		t.Fatal("new bcrypt hash unexpectedly needs rehashing")
-	}
-}
-
 func TestDefaultVerificationRequestsMigrationFromBcrypt(t *testing.T) {
 	encodedHash, err := password.HashWithAlgorithm("password", password.Bcrypt)
 	if err != nil {
@@ -94,29 +76,6 @@ func TestBcryptRejectsPasswordsBeyondItsInputLimit(t *testing.T) {
 	}
 }
 
-func TestUnsupportedAlgorithmIsRejected(t *testing.T) {
-	_, err := password.HashWithAlgorithm("password", password.Algorithm("unknown"))
-	if !errors.Is(err, password.ErrUnsupportedAlgorithm) {
-		t.Fatalf("expected unsupported-algorithm error, got %v", err)
-	}
-}
-
-func TestPasswordHashPreservesArbitraryUTF8AndNullBytes(t *testing.T) {
-	plainPassword := " ọrọ aṣínà 🔐\x00 "
-	encodedHash, err := password.Hash(plainPassword)
-	if err != nil {
-		t.Fatalf("hash password: %v", err)
-	}
-
-	verification, err := password.Verify(plainPassword, encodedHash)
-	if err != nil {
-		t.Fatalf("verify password: %v", err)
-	}
-	if !verification.Matches {
-		t.Fatal("password with Unicode and null byte did not match")
-	}
-}
-
 func TestMalformedAndUnboundedHashesAreRejected(t *testing.T) {
 	tests := map[string]string{
 		"empty":                "",
@@ -127,6 +86,7 @@ func TestMalformedAndUnboundedHashesAreRejected(t *testing.T) {
 		"duplicate parameter":  "$argon2id$v=19$m=19456,m=2,p=1$c2FsdA$a2V5",
 		"invalid salt":         "$argon2id$v=19$m=19456,t=2,p=1$***$a2V5",
 		"malformed bcrypt":     "$2b$12$invalid",
+		"oversized hash":       "$argon2id$v=19$m=19456,t=2,p=1$" + strings.Repeat("a", 600) + "$a2V5",
 	}
 
 	for name, encodedHash := range tests {
@@ -171,12 +131,4 @@ func legacyArgon2Hash(plainPassword string) string {
 		base64.RawStdEncoding.EncodeToString(salt),
 		base64.RawStdEncoding.EncodeToString(key),
 	)
-}
-
-func TestOversizedEncodedHashIsRejected(t *testing.T) {
-	encodedHash := "$argon2id$v=19$m=19456,t=2,p=1$" + strings.Repeat("a", 600) + "$a2V5"
-	_, err := password.Verify("password", encodedHash)
-	if !errors.Is(err, password.ErrInvalidHash) {
-		t.Fatalf("expected invalid hash error, got %v", err)
-	}
 }

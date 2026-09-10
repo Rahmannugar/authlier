@@ -1,8 +1,6 @@
 # Authlier
 
-Authlier is an authentication library for Go applications. It provides secure,
-composable authentication capabilities without binding an application to an
-HTTP framework, database, cache, mail service, or authorization model.
+Authlier is an authentication library for Go applications. It provides secure authentication capabilities through a clear, composable API.
 
 ## Installation
 
