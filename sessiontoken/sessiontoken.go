@@ -56,9 +56,11 @@ type Issued struct {
 type Store interface {
 	Create(ctx context.Context, record Record) error
 	FindByTokenHash(ctx context.Context, tokenHash TokenHash) (Record, error)
+	ListBySubject(ctx context.Context, subjectID string) ([]Record, error)
 	Extend(ctx context.Context, tokenHash TokenHash, extendedAt, expiresAt time.Time) (Record, error)
 	Rotate(ctx context.Context, current TokenHash, replacement Record, rotatedAt time.Time) error
 	Revoke(ctx context.Context, tokenHash TokenHash, revokedAt time.Time) error
+	RevokeAll(ctx context.Context, subjectID string, revokedAt time.Time) ([]Record, error)
 }
 
 // Cache is an optional bounded-TTL acceleration layer.
@@ -245,6 +247,49 @@ func (manager *Manager) Revoke(ctx context.Context, rawToken string) error {
 		return fmt.Errorf("revoke durable session: %w", err)
 	}
 	return manager.deleteCached(ctx, tokenHash)
+}
+
+// List returns the durable sessions for a subject. Inactive sessions are
+// included so callers can show session history and decide what to remove.
+func (manager *Manager) List(ctx context.Context, subjectID string) ([]Record, error) {
+	if strings.TrimSpace(subjectID) == "" {
+		return nil, fmt.Errorf("%w: subject ID is required", ErrInvalidRecord)
+	}
+	records, err := manager.store.ListBySubject(ctx, subjectID)
+	if err != nil {
+		return nil, fmt.Errorf("list durable sessions: %w", err)
+	}
+	for _, record := range records {
+		if err := validRecord(record); err != nil || record.SubjectID != subjectID {
+			return nil, ErrInvalidRecord
+		}
+	}
+	return records, nil
+}
+
+// RevokeAll durably invalidates every session for a subject, then removes
+// cached state for the affected sessions. Durable success is retained when
+// cache invalidation fails and ErrCacheSync is returned for retry handling.
+func (manager *Manager) RevokeAll(ctx context.Context, subjectID string) error {
+	if strings.TrimSpace(subjectID) == "" {
+		return fmt.Errorf("%w: subject ID is required", ErrInvalidRecord)
+	}
+	records, err := manager.store.RevokeAll(ctx, subjectID, manager.now().UTC())
+	if err != nil {
+		return fmt.Errorf("revoke durable sessions: %w", err)
+	}
+	var cacheErr error
+	for _, record := range records {
+		if err := validRecord(record); err != nil || record.SubjectID != subjectID {
+			return ErrInvalidRecord
+		}
+		if err := manager.deleteCached(ctx, record.TokenHash); err != nil {
+			if cacheErr == nil {
+				cacheErr = err
+			}
+		}
+	}
+	return cacheErr
 }
 
 // HashToken validates and hashes a raw token for server-side lookup.

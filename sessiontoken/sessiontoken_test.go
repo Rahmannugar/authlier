@@ -72,6 +72,72 @@ func TestSessionLifecycleRotatesExpiresAndRevokesCredentials(t *testing.T) {
 	}
 }
 
+func TestListAndRevokeAllSessionsBySubject(t *testing.T) {
+	store := newMemoryStore()
+	cache := newMemoryCache()
+	manager := newManager(t, store, cache, nil)
+	ctx := context.Background()
+
+	first, err := manager.Create(ctx, "user_123")
+	if err != nil {
+		t.Fatalf("create first session: %v", err)
+	}
+	second, err := manager.Create(ctx, "user_123")
+	if err != nil {
+		t.Fatalf("create second session: %v", err)
+	}
+	if _, err := manager.Create(ctx, "user_other"); err != nil {
+		t.Fatalf("create other session: %v", err)
+	}
+
+	records, err := manager.List(ctx, "user_123")
+	if err != nil || len(records) != 2 {
+		t.Fatalf("list sessions: records=%d err=%v", len(records), err)
+	}
+	if err := manager.RevokeAll(ctx, "user_123"); err != nil {
+		t.Fatalf("revoke all sessions: %v", err)
+	}
+	if _, err := manager.Resolve(ctx, first.Token); !errors.Is(err, sessiontoken.ErrInactive) {
+		t.Fatalf("first session remained active: %v", err)
+	}
+	if _, err := manager.Resolve(ctx, second.Token); !errors.Is(err, sessiontoken.ErrInactive) {
+		t.Fatalf("second session remained active: %v", err)
+	}
+	if len(cache.records) != 1 {
+		t.Fatal("revoke all removed an unrelated cached session or left revoked sessions")
+	}
+	if err := manager.RevokeAll(ctx, "user_123"); err != nil {
+		t.Fatalf("revoke all should be idempotent: %v", err)
+	}
+}
+
+func TestListAndRevokeAllRequireSubject(t *testing.T) {
+	manager := newManager(t, newMemoryStore(), nil, nil)
+	if _, err := manager.List(context.Background(), " "); !errors.Is(err, sessiontoken.ErrInvalidRecord) {
+		t.Fatalf("list blank subject: %v", err)
+	}
+	if err := manager.RevokeAll(context.Background(), " "); !errors.Is(err, sessiontoken.ErrInvalidRecord) {
+		t.Fatalf("revoke blank subject: %v", err)
+	}
+}
+
+func TestRevokeAllReportsCacheSynchronizationFailureAfterDurableSuccess(t *testing.T) {
+	store := newMemoryStore()
+	cache := newMemoryCache()
+	manager := newManager(t, store, cache, nil)
+	issued, err := manager.Create(context.Background(), "user_123")
+	if err != nil {
+		t.Fatalf("create session: %v", err)
+	}
+	cache.deleteErr = errors.New("cache unavailable")
+	if err := manager.RevokeAll(context.Background(), "user_123"); !errors.Is(err, sessiontoken.ErrCacheSync) {
+		t.Fatalf("revoke all cache failure: %v", err)
+	}
+	if store.records[issued.Record.TokenHash].RevokedAt == nil {
+		t.Fatal("durable session was not revoked")
+	}
+}
+
 func TestResolveFallsBackToDurableStoreWhenCacheIsUnavailable(t *testing.T) {
 	ctx := context.Background()
 	now := time.Date(2026, time.September, 10, 12, 0, 0, 0, time.UTC)
@@ -304,10 +370,14 @@ func TestCacheTTLNeverExceedsSessionExpiry(t *testing.T) {
 
 func newManager(t *testing.T, store sessiontoken.Store, cache sessiontoken.Cache, now *time.Time) *sessiontoken.Manager {
 	t.Helper()
+	nowFunc := time.Now
+	if now != nil {
+		nowFunc = func() time.Time { return *now }
+	}
 	manager, err := sessiontoken.NewManager(store, cache, sessiontoken.Config{
 		Lifetime: 24 * time.Hour,
 		CacheTTL: 5 * time.Minute,
-		Now:      func() time.Time { return *now },
+		Now:      nowFunc,
 	})
 	if err != nil {
 		t.Fatalf("create manager: %v", err)
@@ -347,6 +417,18 @@ func (store *memoryStore) FindByTokenHash(_ context.Context, tokenHash sessionto
 		return sessiontoken.Record{}, sessiontoken.ErrNotFound
 	}
 	return record, nil
+}
+
+func (store *memoryStore) ListBySubject(_ context.Context, subjectID string) ([]sessiontoken.Record, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	var records []sessiontoken.Record
+	for _, record := range store.records {
+		if record.SubjectID == subjectID {
+			records = append(records, record)
+		}
+	}
+	return records, nil
 }
 
 func (store *memoryStore) Extend(
@@ -409,6 +491,23 @@ func (store *memoryStore) Revoke(_ context.Context, tokenHash sessiontoken.Token
 		store.records[tokenHash] = record
 	}
 	return nil
+}
+
+func (store *memoryStore) RevokeAll(_ context.Context, subjectID string, revokedAt time.Time) ([]sessiontoken.Record, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	var affected []sessiontoken.Record
+	for hash, record := range store.records {
+		if record.SubjectID != subjectID {
+			continue
+		}
+		if record.RevokedAt == nil {
+			record.RevokedAt = &revokedAt
+			store.records[hash] = record
+		}
+		affected = append(affected, record)
+	}
+	return affected, nil
 }
 
 type memoryCache struct {

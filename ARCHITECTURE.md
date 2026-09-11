@@ -36,6 +36,10 @@ raw session token
 The stored session determines whether a user is still signed in. If the session
 is not cached or the cache is unavailable, Authlier reads it from storage. A
 session can never be extended beyond its configured maximum lifetime.
+Applications can list a subject's durable sessions and revoke all of them in
+one storage operation. Account-wide revocation then removes each affected
+session from the optional cache; durable success is preserved if cache cleanup
+needs retrying.
 
 ### JWT access and refresh tokens
 

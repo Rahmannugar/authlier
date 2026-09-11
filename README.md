@@ -59,6 +59,8 @@ Authlier supports two ways to manage authenticated sessions:
 
 Applications store only hashes of opaque session and refresh tokens. The
 durable session store determines whether a session is active or revoked.
+The session manager also supports listing a subject's sessions and revoking
+all sessions for an account, with cache invalidation after durable revocation.
 
 ## Security
 
