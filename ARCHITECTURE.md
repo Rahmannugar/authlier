@@ -20,6 +20,7 @@ authlier/
   refreshtoken/      Opaque refresh-token rotation and reuse detection
   sessiontoken/      Opaque server-side session lifecycle and caching
   token/             Opaque token generation and hashing
+  totp/              Authenticator-app MFA and recovery codes
 ```
 
 ## Sessions
@@ -89,6 +90,12 @@ delivery.
 Google's `sub` claim identifies the linked account. Email is saved as profile
 data and may change without changing which local user signs in. Linking Google
 to an existing local account requires an authenticated user.
+
+## Authenticator-app MFA
+
+Enrollment becomes active only after a valid authenticator code. Login uses a
+short-lived challenge created after the primary credential succeeds. TOTP
+counters and recovery codes can each authenticate only once.
 
 ## Persistence and caching
 

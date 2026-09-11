@@ -10,7 +10,7 @@ go get github.com/Rahmannugar/authlier
 
 ## Architecture
 
-Authlier is split into packages for passwords, sessions, and tokens. The host
+Authlier keeps each authentication capability in its own package. The host
 application connects them to storage and handles web requests and permissions.
 See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the package boundaries.
 
@@ -56,6 +56,12 @@ state, nonce, and S256 PKCE. Google accounts are linked by Google's stable
 account ID (`sub`), not by email, so changing a Google email address does not
 break sign-in. A user must sign in before linking Google to an existing local
 account.
+
+## Authenticator-app MFA
+
+The `totp` package handles authenticator enrollment, short-lived MFA
+challenges, and single-use recovery codes. Applications must require recent
+authentication before enrollment or removal and encrypt TOTP secrets at rest.
 
 ## Sessions
 
