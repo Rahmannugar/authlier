@@ -10,12 +10,15 @@ delivery.
 
 ```text
 authlier/
-  accesstoken/   Ed25519 JWT access-token issuance and verification
-  emailpassword/ Email/password registration and login orchestration
-  password/      Argon2id and bcrypt password hashing
-  refreshtoken/  Opaque refresh-token rotation and reuse detection
-  sessiontoken/  Opaque server-side session lifecycle and caching
-  token/         Opaque token generation and hashing
+  accesstoken/       Ed25519 JWT access-token issuance and verification
+  emailaddress/      Shared email normalization
+  emailpassword/     Email/password registration and login orchestration
+  emailverification/ Email ownership verification
+  password/          Argon2id and bcrypt password hashing
+  passwordreset/     Password recovery
+  refreshtoken/      Opaque refresh-token rotation and reuse detection
+  sessiontoken/      Opaque server-side session lifecycle and caching
+  token/             Opaque token generation and hashing
 ```
 
 ## Sessions
@@ -64,6 +67,17 @@ the faster response does not reveal whether the email exists. During a password
 hash upgrade, storage replaces the hash only if the password has not changed
 since login began. The host application sets password rules, blocks abusive
 attempts, and records security events.
+
+## Email verification and password recovery
+
+Both flows email a random, expiring token and store only its hash. Sending a new
+token replaces the earlier one. Email verification consumes the token and marks
+the same email as verified in one storage operation. Password reset consumes
+the token and replaces the password in one storage operation.
+
+The public HTTP handler must return the same response for every email. It should
+queue this work and return without waiting for the account lookup or email
+delivery.
 
 ## Persistence and caching
 

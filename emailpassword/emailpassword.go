@@ -5,15 +5,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"net/mail"
 	"strings"
 	"time"
-	"unicode/utf8"
 
+	"github.com/Rahmannugar/authlier/emailaddress"
 	passwordhash "github.com/Rahmannugar/authlier/password"
 )
-
-const maximumEmailLength = 254
 
 var (
 	ErrAttemptBlocked          = errors.New("authentication attempt blocked")
@@ -98,7 +95,7 @@ type SecurityEventSink interface {
 	Record(ctx context.Context, event SecurityEvent)
 }
 
-type EmailNormalizer func(rawEmail string) (string, error)
+type EmailNormalizer = emailaddress.Normalizer
 
 type Config struct {
 	Passwords      Passwords
@@ -146,7 +143,7 @@ func NewManager(store Store, config Config) (*Manager, error) {
 	}
 	normalizeEmail := config.NormalizeEmail
 	if normalizeEmail == nil {
-		normalizeEmail = NormalizeEmail
+		normalizeEmail = emailaddress.Normalize
 	}
 	now := config.Now
 	if now == nil {
@@ -279,9 +276,8 @@ func (manager *Manager) Login(ctx context.Context, input LoginInput) (LoginResul
 }
 
 func NormalizeEmail(rawEmail string) (string, error) {
-	trimmed := strings.TrimSpace(rawEmail)
-	normalizedEmail := strings.ToLower(trimmed)
-	if !validNormalizedEmail(normalizedEmail) {
+	normalizedEmail, err := emailaddress.Normalize(rawEmail)
+	if err != nil {
 		return "", ErrInvalidInput
 	}
 	return normalizedEmail, nil
@@ -292,19 +288,10 @@ func (manager *Manager) normalizeAndValidateEmail(rawEmail string) (string, erro
 	if err != nil {
 		return "", ErrInvalidInput
 	}
-	if !validNormalizedEmail(normalizedEmail) {
+	if !emailaddress.Valid(normalizedEmail) {
 		return "", ErrInvalidInput
 	}
 	return normalizedEmail, nil
-}
-
-func validNormalizedEmail(normalizedEmail string) bool {
-	if normalizedEmail == "" || normalizedEmail != strings.TrimSpace(normalizedEmail) ||
-		len(normalizedEmail) > maximumEmailLength || !utf8.ValidString(normalizedEmail) {
-		return false
-	}
-	parsed, err := mail.ParseAddress(normalizedEmail)
-	return err == nil && parsed.Address == normalizedEmail
 }
 
 func (manager *Manager) checkAttempt(ctx context.Context, attempt Attempt) error {

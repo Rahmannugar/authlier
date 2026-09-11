@@ -20,6 +20,13 @@ The `emailpassword` package handles registration, login, old password-hash
 upgrades, abuse checks, and security events. The host application provides the
 storage implementation and password rules.
 
+## Email verification and password recovery
+
+The `emailverification` and `passwordreset` packages send expiring, one-time
+tokens through application-provided mail senders. Authlier stores only token
+hashes. Request handlers must return the same public response whether the email
+exists or not.
+
 ## Passwords
 
 The `password` package supports Argon2id by default and bcrypt for compatibility.
