@@ -2,14 +2,15 @@
 
 ## Purpose
 
-Authlier handles reusable authentication rules. The host application handles
-web requests, access permissions, password rules, storage, caching, and event
-delivery.
+Authlier handles reusable authentication rules and provides standard HTTP
+routes through one configured handler. The host application supplies storage,
+policy, and delivery hooks and owns access permissions.
 
 ## Package structure
 
 ```text
 authlier/
+	root package        Configuration, standard HTTP routes, and session lookup
   accesstoken/       Ed25519 JWT access-token issuance and verification
   emailaddress/      Shared email normalization
   emailpassword/     Email/password registration and login orchestration
@@ -24,6 +25,8 @@ authlier/
   sessiontoken/      Opaque server-side session lifecycle and caching
   token/             Opaque token generation and hashing
   totp/              Authenticator-app MFA and recovery codes
+	postgres/          PostgreSQL storage adapter and migrations
+	redis/             Optional Redis session cache
 ```
 
 ## Sessions

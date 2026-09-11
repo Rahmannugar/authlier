@@ -10,8 +10,38 @@ permissions:
 
 jobs:
   validate:
-    name: Test, vet, and build
+    name: Test, vet, and build (PostgreSQL ${{ matrix.postgres }}, Redis ${{ matrix.redis }})
     runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        postgres: [17, 18]
+        redis: [7.4, 8]
+    services:
+      postgres:
+        image: postgres:${{ matrix.postgres }}
+        env:
+          POSTGRES_DB: authlier_test
+          POSTGRES_PASSWORD: authlier_test
+          POSTGRES_USER: authlier_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U authlier_test -d authlier_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+      redis:
+        image: redis:${{ matrix.redis }}
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      AUTHLIER_POSTGRES_TEST_DSN: postgres://authlier_test:authlier_test@localhost:5432/authlier_test?sslmode=disable
+      AUTHLIER_REDIS_TEST_ADDRESS: localhost:6379
     steps:
       - name: Checkout
         uses: actions/checkout@v4

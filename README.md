@@ -2,6 +2,10 @@
 
 Authlier is a framework-neutral authentication library for Go applications.
 
+Configure Authlier once and mount its standard HTTP handler. Your application
+still owns authorization rules and can replace the standard routes with the
+lower-level packages when needed.
+
 ## Installation
 
 ```bash
@@ -10,9 +14,16 @@ go get github.com/Rahmannugar/authlier
 
 ## Architecture
 
-Authlier keeps each authentication capability in its own package. The host
-application connects them to storage and handles web requests and permissions.
+Authlier keeps each authentication capability in its own package. The root
+package connects enabled capabilities to storage and exposes the HTTP handler.
 See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the package boundaries.
+
+## Getting started
+
+Create a PostgreSQL adapter, pass it to `authlier.New`, and mount
+`auth.Handler()`. Redis can optionally cache sessions. See
+[`docs/getting-started.md`](docs/getting-started.md) for a working setup and
+[`docs/storage.md`](docs/storage.md) for adapter details.
 
 ## Email and password authentication
 
