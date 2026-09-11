@@ -24,6 +24,7 @@ var (
 	ErrInvalidConfig    = errors.New("invalid passkey configuration")
 	ErrInvalidInput     = errors.New("invalid passkey input")
 	ErrInvalidRecord    = errors.New("invalid passkey record")
+	ErrLastCredential   = errors.New("cannot remove the last sign-in method")
 	ErrNotFound         = errors.New("passkey record not found")
 	ErrVerification     = errors.New("passkey verification failed")
 )
@@ -60,8 +61,8 @@ type Ceremony struct {
 	ExpiresAt time.Time
 }
 
-// Store keeps complete credential records, encrypting sensitive fields at rest.
-// Credential writes consume the ceremony, and authentication uses compare-and-swap.
+// Store keeps complete credential records, consumes ceremonies with credential
+// writes, and preserves another sign-in method when deleting a credential.
 type Store interface {
 	FindUserBySubject(ctx context.Context, subjectID string) (User, error)
 	FindUserByCredential(ctx context.Context, credentialID, userHandle []byte) (User, error)
@@ -360,6 +361,9 @@ func (manager *Manager) Remove(
 		return ErrInvalidInput
 	}
 	if err := manager.store.DeleteCredential(ctx, subjectID, credentialID, manager.now().UTC()); err != nil {
+		if errors.Is(err, ErrLastCredential) {
+			return err
+		}
 		return fmt.Errorf("remove passkey: %w", err)
 	}
 	manager.record(ctx, EventRemoved, subjectID, sourceKey)

@@ -161,6 +161,17 @@ func TestExpiredCeremonyCannotAuthenticate(t *testing.T) {
 	}
 }
 
+func TestRemoveCannotDeleteTheLastSignInMethod(t *testing.T) {
+	store := newMemoryStore()
+	store.deleteErr = ErrLastCredential
+	manager := newTestManager(store, &fakeProtocol{}, func() time.Time { return fixedTime })
+
+	err := manager.Remove(context.Background(), "user-1", []byte("credential-1"), "")
+	if !errors.Is(err, ErrLastCredential) {
+		t.Fatalf("remove last sign-in method: got %v, want last credential", err)
+	}
+}
+
 func newTestManager(store Store, engine ceremonyProtocol, now func() time.Time) *Manager {
 	return &Manager{
 		store:    store,
@@ -225,6 +236,7 @@ type memoryStore struct {
 	mu         sync.Mutex
 	users      map[string]User
 	ceremonies map[CeremonyHash]Ceremony
+	deleteErr  error
 }
 
 func newMemoryStore() *memoryStore {
@@ -362,6 +374,9 @@ func (store *memoryStore) DeleteCredential(
 ) error {
 	store.mu.Lock()
 	defer store.mu.Unlock()
+	if store.deleteErr != nil {
+		return store.deleteErr
+	}
 	user, exists := store.users[subjectID]
 	if !exists {
 		return ErrNotFound

@@ -157,18 +157,72 @@ func TestChallengeStoreFailureRemainsOperationalError(t *testing.T) {
 	}
 }
 
+func TestUnlinkRemovesTheRequestedGoogleAccount(t *testing.T) {
+	now := time.Date(2026, time.September, 11, 12, 0, 0, 0, time.UTC)
+	store := newStore()
+	events := &eventRecorder{}
+	manager := newManagerWithConfig(t, store, &providerStub{}, googleoauth.Config{
+		ClientID:         "client-id",
+		AuthorizationURL: "https://accounts.google.com/o/oauth2/v2/auth",
+		RedirectURL:      "https://app.example.com/auth/google/callback",
+		StateLifetime:    time.Minute,
+		SecurityEvents:   events,
+		Now:              func() time.Time { return now },
+	})
+
+	err := manager.Unlink(
+		context.Background(),
+		"user_123",
+		"google-account-1",
+		"client:203.0.113.10",
+	)
+	if err != nil {
+		t.Fatalf("unlink Google account: %v", err)
+	}
+	if store.unlinked.subjectID != "user_123" ||
+		store.unlinked.providerSubject != "google-account-1" ||
+		!store.unlinked.at.Equal(now) {
+		t.Fatalf("unexpected unlink request: %+v", store.unlinked)
+	}
+	if len(events.events) != 1 || events.events[0].Type != googleoauth.EventUnlinked ||
+		events.events[0].SubjectID != "user_123" {
+		t.Fatalf("unexpected security events: %+v", events.events)
+	}
+}
+
+func TestUnlinkCannotRemoveTheLastSignInMethod(t *testing.T) {
+	store := newStore()
+	store.unlinkErr = googleoauth.ErrLastCredential
+	manager := newManager(t, store, &providerStub{})
+
+	err := manager.Unlink(context.Background(), "user_123", "google-account-1", "")
+	if !errors.Is(err, googleoauth.ErrLastCredential) {
+		t.Fatalf("unlink last sign-in method: got %v, want last credential", err)
+	}
+}
+
 func newManager(
 	t *testing.T,
 	store googleoauth.Store,
 	provider googleoauth.Provider,
 ) *googleoauth.Manager {
 	t.Helper()
-	manager, err := googleoauth.NewManager(store, provider, googleoauth.Config{
+	return newManagerWithConfig(t, store, provider, googleoauth.Config{
 		ClientID:         "client-id",
 		AuthorizationURL: "https://accounts.google.com/o/oauth2/v2/auth?prompt=select_account",
 		RedirectURL:      "https://app.example.com/auth/google/callback",
 		StateLifetime:    time.Minute,
 	})
+}
+
+func newManagerWithConfig(
+	t *testing.T,
+	store googleoauth.Store,
+	provider googleoauth.Provider,
+	config googleoauth.Config,
+) *googleoauth.Manager {
+	t.Helper()
+	manager, err := googleoauth.NewManager(store, provider, config)
 	if err != nil {
 		t.Fatalf("create Google OAuth manager: %v", err)
 	}
@@ -216,7 +270,15 @@ type memoryStore struct {
 	lastResolution  googleoauth.IdentityResolution
 	resolutionCalls int
 	consumeErr      error
+	unlinked        unlinkRequest
+	unlinkErr       error
 	nextUser        int
+}
+
+type unlinkRequest struct {
+	subjectID       string
+	providerSubject string
+	at              time.Time
 }
 
 func newStore() *memoryStore {
@@ -286,6 +348,22 @@ func (store *memoryStore) ResolveIdentity(
 	return user, nil
 }
 
+func (store *memoryStore) UnlinkIdentity(
+	_ context.Context,
+	subjectID string,
+	providerSubject string,
+	unlinkedAt time.Time,
+) error {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	store.unlinked = unlinkRequest{
+		subjectID:       subjectID,
+		providerSubject: providerSubject,
+		at:              unlinkedAt,
+	}
+	return store.unlinkErr
+}
+
 func (store *memoryStore) challenge() googleoauth.Challenge {
 	store.mu.Lock()
 	defer store.mu.Unlock()
@@ -302,4 +380,12 @@ func (store *memoryStore) resolveCalls() int {
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	return store.resolutionCalls
+}
+
+type eventRecorder struct {
+	events []googleoauth.SecurityEvent
+}
+
+func (recorder *eventRecorder) Record(_ context.Context, event googleoauth.SecurityEvent) {
+	recorder.events = append(recorder.events, event)
 }

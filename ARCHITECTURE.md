@@ -72,8 +72,9 @@ Registration creates the user and password credential in one storage operation.
 For an unknown email, login still verifies the password against a dummy hash so
 the faster response does not reveal whether the email exists. During a password
 hash upgrade, storage replaces the hash only if the password has not changed
-since login began. The host application sets password rules, blocks abusive
-attempts, and records security events.
+since login began. Password changes verify the current password and use the same
+safe replacement. Adding a password requires recent authentication. Password
+removal succeeds only when another sign-in method remains.
 
 ## Email verification and password recovery
 
@@ -90,7 +91,8 @@ delivery.
 
 Google's `sub` claim identifies the linked account. Email is saved as profile
 data and may change without changing which local user signs in. Linking Google
-to an existing local account requires an authenticated user.
+to an existing local account requires an authenticated user. Unlinking refuses
+to remove the account's last sign-in method.
 
 ## Authenticator-app MFA
 
@@ -102,7 +104,8 @@ counters and recovery codes can each authenticate only once.
 
 Passkey registration belongs to an authenticated user. Sign-in discovers the
 user from the credential ID and stable WebAuthn user handle. Each ceremony is
-short-lived, and credential updates consume the ceremony atomically.
+short-lived, and credential updates consume the ceremony atomically. Removing a
+passkey cannot remove the account's last sign-in method.
 
 ## Persistence and caching
 

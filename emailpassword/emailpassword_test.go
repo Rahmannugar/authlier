@@ -188,6 +188,136 @@ func TestConcurrentPasswordChangePreventsStaleLogin(t *testing.T) {
 	}
 }
 
+func TestChangePasswordVerifiesCurrentPasswordAndReplacesItsHash(t *testing.T) {
+	now := time.Date(2026, time.September, 11, 12, 0, 0, 0, time.UTC)
+	store := &stubStore{
+		user:       emailpassword.User{ID: "user_123", Email: "owner@example.com"},
+		credential: emailpassword.PasswordCredential{UserID: "user_123", PasswordHash: "preferred:current"},
+	}
+	passwords := newStubPasswords()
+	events := &eventRecorder{}
+	manager := newManager(t, store, passwords, nil, events, now)
+
+	user, err := manager.ChangePassword(context.Background(), emailpassword.ChangePasswordInput{
+		SubjectID:       "user_123",
+		CurrentPassword: "current",
+		NewPassword:     "replacement",
+		SourceKey:       "client:203.0.113.10",
+	})
+	if err != nil {
+		t.Fatalf("change password: %v", err)
+	}
+	if user.ID != "user_123" {
+		t.Fatalf("changed password for unexpected user: %+v", user)
+	}
+	if store.replacement.currentHash != "preferred:current" ||
+		store.replacement.replacementHash != "preferred:replacement" ||
+		!store.replacement.updatedAt.Equal(now) {
+		t.Fatalf("unexpected password replacement: %+v", store.replacement)
+	}
+	if len(events.events) != 1 || events.events[0].Type != emailpassword.EventPasswordChanged {
+		t.Fatalf("unexpected security events: %+v", events.events)
+	}
+}
+
+func TestChangePasswordRejectsWrongOrReusedPassword(t *testing.T) {
+	store := &stubStore{
+		user:       emailpassword.User{ID: "user_123", Email: "owner@example.com"},
+		credential: emailpassword.PasswordCredential{UserID: "user_123", PasswordHash: "preferred:current"},
+	}
+	manager := newManager(t, store, newStubPasswords(), nil, nil, time.Now())
+
+	_, err := manager.ChangePassword(context.Background(), emailpassword.ChangePasswordInput{
+		SubjectID:       "user_123",
+		CurrentPassword: "wrong",
+		NewPassword:     "replacement",
+	})
+	if !errors.Is(err, emailpassword.ErrInvalidCredentials) {
+		t.Fatalf("wrong current password: got %v, want invalid credentials", err)
+	}
+	if store.replacement.replacementHash != "" {
+		t.Fatal("wrong current password reached storage replacement")
+	}
+
+	_, err = manager.ChangePassword(context.Background(), emailpassword.ChangePasswordInput{
+		SubjectID:       "user_123",
+		CurrentPassword: "current",
+		NewPassword:     "current",
+	})
+	if !errors.Is(err, emailpassword.ErrPasswordUnchanged) {
+		t.Fatalf("reused password: got %v, want unchanged password", err)
+	}
+	if store.replacement.replacementHash != "" {
+		t.Fatal("reused password reached storage replacement")
+	}
+}
+
+func TestChangePasswordRejectsConcurrentReplacement(t *testing.T) {
+	store := &stubStore{
+		user:       emailpassword.User{ID: "user_123", Email: "owner@example.com"},
+		credential: emailpassword.PasswordCredential{UserID: "user_123", PasswordHash: "preferred:current"},
+		replaceErr: emailpassword.ErrConflict,
+	}
+	manager := newManager(t, store, newStubPasswords(), nil, nil, time.Now())
+
+	_, err := manager.ChangePassword(context.Background(), emailpassword.ChangePasswordInput{
+		SubjectID:       "user_123",
+		CurrentPassword: "current",
+		NewPassword:     "replacement",
+	})
+	if !errors.Is(err, emailpassword.ErrInvalidCredentials) {
+		t.Fatalf("concurrent password replacement: got %v, want invalid credentials", err)
+	}
+}
+
+func TestPasswordCanBeAddedToAnAuthenticatedAccount(t *testing.T) {
+	now := time.Date(2026, time.September, 11, 12, 0, 0, 0, time.UTC)
+	store := &stubStore{}
+	events := &eventRecorder{}
+	manager := newManager(t, store, newStubPasswords(), nil, events, now)
+
+	user, err := manager.AddPassword(context.Background(), emailpassword.AddPasswordInput{
+		SubjectID: "user_123",
+		Password:  "new-password",
+		SourceKey: "client:203.0.113.10",
+	})
+	if err != nil {
+		t.Fatalf("add password: %v", err)
+	}
+	if user.ID != "user_123" || store.addedHash != "preferred:new-password" ||
+		!store.addedAt.Equal(now) {
+		t.Fatalf("unexpected added password: user=%+v hash=%q at=%v", user, store.addedHash, store.addedAt)
+	}
+	if len(events.events) != 1 || events.events[0].Type != emailpassword.EventPasswordAdded {
+		t.Fatalf("unexpected security events: %+v", events.events)
+	}
+}
+
+func TestRemovePasswordRequiresItAndPreservesAnotherSignInMethod(t *testing.T) {
+	store := &stubStore{
+		user:       emailpassword.User{ID: "user_123", Email: "owner@example.com"},
+		credential: emailpassword.PasswordCredential{UserID: "user_123", PasswordHash: "preferred:current"},
+		removeErr:  emailpassword.ErrLastCredential,
+	}
+	manager := newManager(t, store, newStubPasswords(), nil, nil, time.Now())
+
+	err := manager.RemovePassword(context.Background(), emailpassword.RemovePasswordInput{
+		SubjectID:       "user_123",
+		CurrentPassword: "wrong",
+	})
+	if !errors.Is(err, emailpassword.ErrInvalidCredentials) || store.removeCalls != 0 {
+		t.Fatalf("wrong password removal: err=%v calls=%d", err, store.removeCalls)
+	}
+
+	err = manager.RemovePassword(context.Background(), emailpassword.RemovePasswordInput{
+		SubjectID:       "user_123",
+		CurrentPassword: "current",
+	})
+	if !errors.Is(err, emailpassword.ErrLastCredential) {
+		t.Fatalf("remove last sign-in method: got %v, want last credential", err)
+	}
+}
+
 func TestAttemptGuardBlocksWorkBeforeStoreAndPasswordVerification(t *testing.T) {
 	store := &stubStore{}
 	passwords := newStubPasswords()
@@ -265,8 +395,27 @@ type stubStore struct {
 	credential   emailpassword.PasswordCredential
 	findErr      error
 	findCalls    int
+	addedHash    string
+	addedAt      time.Time
+	addErr       error
 	replacement  replacement
 	replaceErr   error
+	removeCalls  int
+	removeErr    error
+}
+
+func (store *stubStore) AddPassword(
+	_ context.Context,
+	subjectID string,
+	passwordHash string,
+	addedAt time.Time,
+) (emailpassword.User, error) {
+	store.addedHash = passwordHash
+	store.addedAt = addedAt
+	if store.addErr != nil {
+		return emailpassword.User{}, store.addErr
+	}
+	return emailpassword.User{ID: subjectID, Email: "owner@example.com"}, nil
 }
 
 type replacement struct {
@@ -298,6 +447,17 @@ func (store *stubStore) FindByEmail(
 	return store.user, store.credential, nil
 }
 
+func (store *stubStore) FindBySubject(
+	_ context.Context,
+	_ string,
+) (emailpassword.User, emailpassword.PasswordCredential, error) {
+	store.findCalls++
+	if store.findErr != nil {
+		return emailpassword.User{}, emailpassword.PasswordCredential{}, store.findErr
+	}
+	return store.user, store.credential, nil
+}
+
 func (store *stubStore) ReplacePasswordHash(
 	_ context.Context,
 	userID string,
@@ -312,6 +472,16 @@ func (store *stubStore) ReplacePasswordHash(
 		updatedAt:       updatedAt,
 	}
 	return store.replaceErr
+}
+
+func (store *stubStore) RemovePassword(
+	_ context.Context,
+	_ string,
+	_ string,
+	_ time.Time,
+) error {
+	store.removeCalls++
+	return store.removeErr
 }
 
 type verificationCall struct {

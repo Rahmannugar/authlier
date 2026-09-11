@@ -1,4 +1,4 @@
-// Package emailpassword orchestrates email and password registration and login.
+// Package emailpassword orchestrates email and password authentication.
 package emailpassword
 
 import (
@@ -18,8 +18,11 @@ var (
 	ErrInvalidConfig           = errors.New("invalid email/password configuration")
 	ErrInvalidCredentials      = errors.New("invalid email or password")
 	ErrInvalidInput            = errors.New("invalid email/password input")
+	ErrInvalidPassword         = errors.New("invalid password")
 	ErrInvalidRecord           = errors.New("invalid email/password record")
+	ErrLastCredential          = errors.New("cannot remove the last sign-in method")
 	ErrNotFound                = errors.New("email identity not found")
+	ErrPasswordUnchanged       = errors.New("new password matches current password")
 	ErrRegistrationUnavailable = errors.New("registration unavailable")
 )
 
@@ -39,7 +42,6 @@ type Registration struct {
 	CreatedAt    time.Time
 }
 
-// Store registers users and credentials atomically and replaces hashes with compare-and-swap.
 type Store interface {
 	Register(ctx context.Context, registration Registration) (User, error)
 	FindByEmail(ctx context.Context, normalizedEmail string) (User, PasswordCredential, error)
@@ -52,6 +54,21 @@ type Store interface {
 	) error
 }
 
+// CredentialStore makes account credential writes atomic and preserves another
+// sign-in method on removal.
+type CredentialStore interface {
+	FindBySubject(ctx context.Context, subjectID string) (User, PasswordCredential, error)
+	AddPassword(ctx context.Context, subjectID, passwordHash string, addedAt time.Time) (User, error)
+	ReplacePasswordHash(
+		ctx context.Context,
+		userID string,
+		currentHash string,
+		replacementHash string,
+		updatedAt time.Time,
+	) error
+	RemovePassword(ctx context.Context, subjectID, currentHash string, removedAt time.Time) error
+}
+
 type Passwords interface {
 	Hash(plainPassword string) (string, error)
 	Verify(plainPassword, encodedHash string) (passwordhash.Verification, error)
@@ -60,13 +77,17 @@ type Passwords interface {
 type Operation string
 
 const (
-	OperationRegister Operation = "register"
-	OperationLogin    Operation = "login"
+	OperationRegister       Operation = "register"
+	OperationLogin          Operation = "login"
+	OperationAddPassword    Operation = "add_password"
+	OperationChangePassword Operation = "change_password"
+	OperationRemovePassword Operation = "remove_password"
 )
 
 type Attempt struct {
 	Operation Operation
 	Email     string
+	SubjectID string
 	SourceKey string
 }
 
@@ -81,6 +102,11 @@ const (
 	EventRegistrationSucceeded EventType = "registration_succeeded"
 	EventLoginFailed           EventType = "login_failed"
 	EventLoginSucceeded        EventType = "login_succeeded"
+	EventPasswordAdded         EventType = "password_added"
+	EventPasswordChangeFailed  EventType = "password_change_failed"
+	EventPasswordChanged       EventType = "password_changed"
+	EventPasswordRemovalFailed EventType = "password_removal_failed"
+	EventPasswordRemoved       EventType = "password_removed"
 	EventPasswordRehashed      EventType = "password_rehashed"
 )
 
@@ -96,23 +122,28 @@ type SecurityEventSink interface {
 }
 
 type EmailNormalizer = emailaddress.Normalizer
+type PasswordValidator func(plainPassword string) error
 
 type Config struct {
-	Passwords      Passwords
-	AttemptGuard   AttemptGuard
-	SecurityEvents SecurityEventSink
-	NormalizeEmail EmailNormalizer
-	Now            func() time.Time
+	Passwords        Passwords
+	Credentials      CredentialStore
+	ValidatePassword PasswordValidator
+	AttemptGuard     AttemptGuard
+	SecurityEvents   SecurityEventSink
+	NormalizeEmail   EmailNormalizer
+	Now              func() time.Time
 }
 
 type Manager struct {
-	store          Store
-	passwords      Passwords
-	attemptGuard   AttemptGuard
-	securityEvents SecurityEventSink
-	normalizeEmail EmailNormalizer
-	dummyHash      string
-	now            func() time.Time
+	store            Store
+	credentials      CredentialStore
+	passwords        Passwords
+	validatePassword PasswordValidator
+	attemptGuard     AttemptGuard
+	securityEvents   SecurityEventSink
+	normalizeEmail   EmailNormalizer
+	dummyHash        string
+	now              func() time.Time
 }
 
 type RegisterInput struct {
@@ -132,6 +163,25 @@ type LoginResult struct {
 	PasswordRehashed bool
 }
 
+type ChangePasswordInput struct {
+	SubjectID       string
+	CurrentPassword string
+	NewPassword     string
+	SourceKey       string
+}
+
+type AddPasswordInput struct {
+	SubjectID string
+	Password  string
+	SourceKey string
+}
+
+type RemovePasswordInput struct {
+	SubjectID       string
+	CurrentPassword string
+	SourceKey       string
+}
+
 func NewManager(store Store, config Config) (*Manager, error) {
 	if store == nil {
 		return nil, fmt.Errorf("%w: store is required", ErrInvalidConfig)
@@ -149,6 +199,10 @@ func NewManager(store Store, config Config) (*Manager, error) {
 	if now == nil {
 		now = time.Now
 	}
+	credentials := config.Credentials
+	if credentials == nil {
+		credentials, _ = store.(CredentialStore)
+	}
 
 	// Keep unknown-identity failures on the real password-verification path.
 	dummyHash, err := passwords.Hash("authlier dummy password for unknown identities")
@@ -160,14 +214,49 @@ func NewManager(store Store, config Config) (*Manager, error) {
 	}
 
 	return &Manager{
-		store:          store,
-		passwords:      passwords,
-		attemptGuard:   config.AttemptGuard,
-		securityEvents: config.SecurityEvents,
-		normalizeEmail: normalizeEmail,
-		dummyHash:      dummyHash,
-		now:            now,
+		store:            store,
+		credentials:      credentials,
+		passwords:        passwords,
+		validatePassword: config.ValidatePassword,
+		attemptGuard:     config.AttemptGuard,
+		securityEvents:   config.SecurityEvents,
+		normalizeEmail:   normalizeEmail,
+		dummyHash:        dummyHash,
+		now:              now,
 	}, nil
+}
+
+func (manager *Manager) AddPassword(ctx context.Context, input AddPasswordInput) (User, error) {
+	if manager.credentials == nil {
+		return User{}, fmt.Errorf("%w: credential store is required", ErrInvalidConfig)
+	}
+	subjectID := strings.TrimSpace(input.SubjectID)
+	if subjectID == "" || input.Password == "" {
+		return User{}, ErrInvalidInput
+	}
+	if err := manager.validate(input.Password); err != nil {
+		return User{}, err
+	}
+	if err := manager.checkAttempt(ctx, Attempt{
+		Operation: OperationAddPassword,
+		SubjectID: subjectID,
+		SourceKey: input.SourceKey,
+	}); err != nil {
+		return User{}, err
+	}
+	encodedHash, err := manager.passwords.Hash(input.Password)
+	if err != nil {
+		return User{}, fmt.Errorf("hash added password: %w", err)
+	}
+	user, err := manager.credentials.AddPassword(ctx, subjectID, encodedHash, manager.now().UTC())
+	if err != nil {
+		return User{}, fmt.Errorf("add password: %w", err)
+	}
+	if !validUser(user) || user.ID != subjectID {
+		return User{}, ErrInvalidRecord
+	}
+	manager.record(ctx, EventPasswordAdded, subjectID, input.SourceKey)
+	return user, nil
 }
 
 // Register hashes before checking durable identity uniqueness.
@@ -175,6 +264,9 @@ func (manager *Manager) Register(ctx context.Context, input RegisterInput) (User
 	normalizedEmail, err := manager.normalizeAndValidateEmail(input.Email)
 	if err != nil || input.Password == "" {
 		return User{}, ErrInvalidInput
+	}
+	if err := manager.validate(input.Password); err != nil {
+		return User{}, err
 	}
 	attempt := Attempt{Operation: OperationRegister, Email: normalizedEmail, SourceKey: input.SourceKey}
 	if err := manager.checkAttempt(ctx, attempt); err != nil {
@@ -203,6 +295,125 @@ func (manager *Manager) Register(ctx context.Context, input RegisterInput) (User
 
 	manager.record(ctx, EventRegistrationSucceeded, user.ID, input.SourceKey)
 	return user, nil
+}
+
+func (manager *Manager) ChangePassword(
+	ctx context.Context,
+	input ChangePasswordInput,
+) (User, error) {
+	if manager.credentials == nil {
+		return User{}, fmt.Errorf("%w: credential store is required", ErrInvalidConfig)
+	}
+	subjectID := strings.TrimSpace(input.SubjectID)
+	if subjectID == "" || input.CurrentPassword == "" || input.NewPassword == "" {
+		return User{}, ErrInvalidInput
+	}
+	if err := manager.validate(input.NewPassword); err != nil {
+		return User{}, err
+	}
+	if err := manager.checkAttempt(ctx, Attempt{
+		Operation: OperationChangePassword,
+		SubjectID: subjectID,
+		SourceKey: input.SourceKey,
+	}); err != nil {
+		return User{}, err
+	}
+
+	user, credential, err := manager.credentials.FindBySubject(ctx, subjectID)
+	if errors.Is(err, ErrNotFound) {
+		manager.record(ctx, EventPasswordChangeFailed, subjectID, input.SourceKey)
+		return User{}, ErrInvalidCredentials
+	}
+	if err != nil {
+		return User{}, fmt.Errorf("find password credential: %w", err)
+	}
+	if !validUser(user) || user.ID != subjectID || !validCredential(user, credential) {
+		return User{}, ErrInvalidRecord
+	}
+
+	current, err := manager.passwords.Verify(input.CurrentPassword, credential.PasswordHash)
+	if err != nil || !current.Matches {
+		manager.record(ctx, EventPasswordChangeFailed, subjectID, input.SourceKey)
+		return User{}, ErrInvalidCredentials
+	}
+	unchanged, err := manager.passwords.Verify(input.NewPassword, credential.PasswordHash)
+	if err != nil {
+		return User{}, fmt.Errorf("compare replacement password: %w", err)
+	}
+	if unchanged.Matches {
+		return User{}, ErrPasswordUnchanged
+	}
+
+	replacementHash, err := manager.passwords.Hash(input.NewPassword)
+	if err != nil {
+		return User{}, fmt.Errorf("hash replacement password: %w", err)
+	}
+	if err := manager.credentials.ReplacePasswordHash(
+		ctx,
+		subjectID,
+		credential.PasswordHash,
+		replacementHash,
+		manager.now().UTC(),
+	); err != nil {
+		if errors.Is(err, ErrConflict) || errors.Is(err, ErrNotFound) {
+			manager.record(ctx, EventPasswordChangeFailed, subjectID, input.SourceKey)
+			return User{}, ErrInvalidCredentials
+		}
+		return User{}, fmt.Errorf("replace password: %w", err)
+	}
+
+	manager.record(ctx, EventPasswordChanged, subjectID, input.SourceKey)
+	return user, nil
+}
+
+func (manager *Manager) RemovePassword(ctx context.Context, input RemovePasswordInput) error {
+	if manager.credentials == nil {
+		return fmt.Errorf("%w: credential store is required", ErrInvalidConfig)
+	}
+	subjectID := strings.TrimSpace(input.SubjectID)
+	if subjectID == "" || input.CurrentPassword == "" {
+		return ErrInvalidInput
+	}
+	if err := manager.checkAttempt(ctx, Attempt{
+		Operation: OperationRemovePassword,
+		SubjectID: subjectID,
+		SourceKey: input.SourceKey,
+	}); err != nil {
+		return err
+	}
+	user, credential, err := manager.credentials.FindBySubject(ctx, subjectID)
+	if errors.Is(err, ErrNotFound) {
+		manager.record(ctx, EventPasswordRemovalFailed, subjectID, input.SourceKey)
+		return ErrInvalidCredentials
+	}
+	if err != nil {
+		return fmt.Errorf("find password credential: %w", err)
+	}
+	if !validUser(user) || user.ID != subjectID || !validCredential(user, credential) {
+		return ErrInvalidRecord
+	}
+	verification, err := manager.passwords.Verify(input.CurrentPassword, credential.PasswordHash)
+	if err != nil || !verification.Matches {
+		manager.record(ctx, EventPasswordRemovalFailed, subjectID, input.SourceKey)
+		return ErrInvalidCredentials
+	}
+	if err := manager.credentials.RemovePassword(
+		ctx,
+		subjectID,
+		credential.PasswordHash,
+		manager.now().UTC(),
+	); err != nil {
+		if errors.Is(err, ErrLastCredential) {
+			return err
+		}
+		if errors.Is(err, ErrConflict) || errors.Is(err, ErrNotFound) {
+			manager.record(ctx, EventPasswordRemovalFailed, subjectID, input.SourceKey)
+			return ErrInvalidCredentials
+		}
+		return fmt.Errorf("remove password: %w", err)
+	}
+	manager.record(ctx, EventPasswordRemoved, subjectID, input.SourceKey)
+	return nil
 }
 
 // Login returns the same credential error for unknown emails and wrong passwords.
@@ -292,6 +503,16 @@ func (manager *Manager) normalizeAndValidateEmail(rawEmail string) (string, erro
 		return "", ErrInvalidInput
 	}
 	return normalizedEmail, nil
+}
+
+func (manager *Manager) validate(plainPassword string) error {
+	if manager.validatePassword == nil {
+		return nil
+	}
+	if err := manager.validatePassword(plainPassword); err != nil {
+		return fmt.Errorf("%w: %w", ErrInvalidPassword, err)
+	}
+	return nil
 }
 
 func (manager *Manager) checkAttempt(ctx context.Context, attempt Attempt) error {

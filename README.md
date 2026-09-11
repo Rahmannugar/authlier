@@ -16,9 +16,10 @@ See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the package boundaries.
 
 ## Email and password authentication
 
-The `emailpassword` package handles registration, login, old password-hash
-upgrades, abuse checks, and security events. The host application provides the
-storage implementation and password rules.
+The `emailpassword` package handles registration, login, password changes, and
+old password-hash upgrades. It can also add or remove a password when an
+account uses another sign-in method. The host application provides storage,
+password rules, abuse checks, and security-event delivery.
 
 ## Email verification and password recovery
 
@@ -55,7 +56,7 @@ The `googleoauth` package handles the server-side Authorization Code flow with
 state, nonce, and S256 PKCE. Google accounts are linked by Google's stable
 account ID (`sub`), not by email, so changing a Google email address does not
 break sign-in. A user must sign in before linking Google to an existing local
-account.
+account. Google can be unlinked only when another sign-in method remains.
 
 ## Authenticator-app MFA
 
@@ -67,7 +68,8 @@ authentication before enrollment or removal and encrypt TOTP secrets at rest.
 
 The `passkey` package handles discoverable WebAuthn registration and sign-in.
 Applications store the ceremony state and full credential records through the
-package interfaces. Passkey enrollment and removal require recent authentication.
+package interfaces. Enrollment and removal require recent authentication, and
+removal cannot delete the account's last sign-in method.
 
 ## Sessions
 

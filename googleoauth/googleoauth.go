@@ -16,13 +16,15 @@ import (
 )
 
 var (
-	ErrConflict      = errors.New("Google identity is linked to another user")
-	ErrInvalidConfig = errors.New("invalid Google OAuth configuration")
-	ErrInvalidRecord = errors.New("invalid Google OAuth record")
-	ErrInvalidState  = errors.New("invalid or expired OAuth state")
-	ErrLinkRequired  = errors.New("existing user must authenticate before linking Google")
-	ErrNotFound      = errors.New("Google OAuth record not found")
-	ErrUnverified    = errors.New("Google identity email is not verified")
+	ErrConflict       = errors.New("Google identity is linked to another user")
+	ErrInvalidConfig  = errors.New("invalid Google OAuth configuration")
+	ErrInvalidInput   = errors.New("invalid Google OAuth input")
+	ErrInvalidRecord  = errors.New("invalid Google OAuth record")
+	ErrInvalidState   = errors.New("invalid or expired OAuth state")
+	ErrLastCredential = errors.New("cannot remove the last sign-in method")
+	ErrLinkRequired   = errors.New("existing user must authenticate before linking Google")
+	ErrNotFound       = errors.New("Google OAuth record not found")
+	ErrUnverified     = errors.New("Google identity email is not verified")
 )
 
 type Challenge struct {
@@ -59,6 +61,11 @@ type Store interface {
 	ResolveIdentity(ctx context.Context, resolution IdentityResolution) (User, error)
 }
 
+// IdentityStore must atomically refuse removal of the user's last sign-in method.
+type IdentityStore interface {
+	UnlinkIdentity(ctx context.Context, subjectID, providerSubject string, unlinkedAt time.Time) error
+}
+
 type ExchangeInput struct {
 	Code         string
 	CodeVerifier string
@@ -71,21 +78,40 @@ type Provider interface {
 	Exchange(ctx context.Context, input ExchangeInput) (Identity, error)
 }
 
+type EventType string
+
+const EventUnlinked EventType = "google_unlinked"
+
+type SecurityEvent struct {
+	Type       EventType
+	SubjectID  string
+	SourceKey  string
+	OccurredAt time.Time
+}
+
+type SecurityEventSink interface {
+	Record(ctx context.Context, event SecurityEvent)
+}
+
 type Config struct {
 	ClientID         string
 	AuthorizationURL string
 	RedirectURL      string
 	StateLifetime    time.Duration
+	Identities       IdentityStore
+	SecurityEvents   SecurityEventSink
 	Now              func() time.Time
 }
 
 type Manager struct {
 	store            Store
+	identities       IdentityStore
 	provider         Provider
 	clientID         string
 	authorizationURL url.URL
 	redirectURL      string
 	lifetime         time.Duration
+	securityEvents   SecurityEventSink
 	now              func() time.Time
 }
 
@@ -120,15 +146,50 @@ func NewManager(store Store, provider Provider, config Config) (*Manager, error)
 	if now == nil {
 		now = time.Now
 	}
+	identities := config.Identities
+	if identities == nil {
+		identities, _ = store.(IdentityStore)
+	}
 	return &Manager{
 		store:            store,
+		identities:       identities,
 		provider:         provider,
 		clientID:         clientID,
 		authorizationURL: *authorizationURL,
 		redirectURL:      redirectURL.String(),
 		lifetime:         config.StateLifetime,
+		securityEvents:   config.SecurityEvents,
 		now:              now,
 	}, nil
+}
+
+func (manager *Manager) Unlink(
+	ctx context.Context,
+	subjectID string,
+	providerSubject string,
+	sourceKey string,
+) error {
+	if manager.identities == nil {
+		return fmt.Errorf("%w: identity store is required", ErrInvalidConfig)
+	}
+	subjectID = strings.TrimSpace(subjectID)
+	providerSubject = strings.TrimSpace(providerSubject)
+	if subjectID == "" || providerSubject == "" {
+		return ErrInvalidInput
+	}
+	if err := manager.identities.UnlinkIdentity(
+		ctx,
+		subjectID,
+		providerSubject,
+		manager.now().UTC(),
+	); err != nil {
+		if errors.Is(err, ErrLastCredential) || errors.Is(err, ErrNotFound) {
+			return err
+		}
+		return fmt.Errorf("unlink Google identity: %w", err)
+	}
+	manager.record(ctx, EventUnlinked, subjectID, sourceKey)
+	return nil
 }
 
 func (manager *Manager) Begin(ctx context.Context, subjectID string) (Started, error) {
@@ -268,4 +329,21 @@ func hash(value string) [32]byte {
 func pkceChallenge(codeVerifier string) string {
 	digest := sha256.Sum256([]byte(codeVerifier))
 	return base64.RawURLEncoding.EncodeToString(digest[:])
+}
+
+func (manager *Manager) record(
+	ctx context.Context,
+	eventType EventType,
+	subjectID string,
+	sourceKey string,
+) {
+	if manager.securityEvents == nil {
+		return
+	}
+	manager.securityEvents.Record(ctx, SecurityEvent{
+		Type:       eventType,
+		SubjectID:  subjectID,
+		SourceKey:  sourceKey,
+		OccurredAt: manager.now().UTC(),
+	})
 }
