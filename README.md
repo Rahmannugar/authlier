@@ -49,6 +49,14 @@ if !verification.Matches {
 Applications remain responsible for password policy. Passwords and password
 hashes must never be logged.
 
+## Google authentication
+
+The `googleoauth` package handles the server-side Authorization Code flow with
+state, nonce, and S256 PKCE. Google accounts are linked by Google's stable
+account ID (`sub`), not by email, so changing a Google email address does not
+break sign-in. A user must sign in before linking Google to an existing local
+account.
+
 ## Sessions
 
 Authlier supports two ways to manage authenticated sessions:

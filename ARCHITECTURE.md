@@ -14,6 +14,7 @@ authlier/
   emailaddress/      Shared email normalization
   emailpassword/     Email/password registration and login orchestration
   emailverification/ Email ownership verification
+  googleoauth/       Google Authorization Code flow and account linking
   password/          Argon2id and bcrypt password hashing
   passwordreset/     Password recovery
   refreshtoken/      Opaque refresh-token rotation and reuse detection
@@ -82,6 +83,12 @@ the token and replaces the password in one storage operation.
 The public HTTP handler must return the same response for every email. It should
 queue this work and return without waiting for the account lookup or email
 delivery.
+
+## Google authentication
+
+Google's `sub` claim identifies the linked account. Email is saved as profile
+data and may change without changing which local user signs in. Linking Google
+to an existing local account requires an authenticated user.
 
 ## Persistence and caching
 
