@@ -15,10 +15,12 @@ authlier/
   emailpassword/     Email/password registration and login orchestration
   emailverification/ Email ownership verification
   googleoauth/       Google Authorization Code flow and account linking
+  oidc/              Organization OpenID Connect authentication
   passkey/           WebAuthn passkey registration and sign-in
   password/          Argon2id and bcrypt password hashing
   passwordreset/     Password recovery
   refreshtoken/      Opaque refresh-token rotation and reuse detection
+  saml/              Organization SAML Web SSO authentication
   sessiontoken/      Opaque server-side session lifecycle and caching
   token/             Opaque token generation and hashing
   totp/              Authenticator-app MFA and recovery codes
@@ -93,6 +95,14 @@ Google's `sub` claim identifies the linked account. Email is saved as profile
 data and may change without changing which local user signs in. Linking Google
 to an existing local account requires an authenticated user. Unlinking refuses
 to remove the account's last sign-in method.
+
+## Organization SSO
+
+OIDC discovers the configured provider and validates state, nonce, PKCE, and
+the returned ID token. SAML creates a signed service-provider request and
+validates the response against the configured identity-provider metadata. Both
+flows use short-lived one-time state and return an identity scoped to the
+selected connection. The host application owns organization access.
 
 ## Authenticator-app MFA
 

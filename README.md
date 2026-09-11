@@ -58,6 +58,13 @@ account ID (`sub`), not by email, so changing a Google email address does not
 break sign-in. A user must sign in before linking Google to an existing local
 account. Google can be unlinked only when another sign-in method remains.
 
+## Organization SSO
+
+The `oidc` package handles provider discovery, state, nonce, PKCE, and ID-token
+verification. The `saml` package handles signed service-provider requests and
+validated Web SSO responses. Both return a provider identity; the application
+decides whether that identity belongs to an organization.
+
 ## Authenticator-app MFA
 
 The `totp` package handles authenticator enrollment, short-lived MFA
