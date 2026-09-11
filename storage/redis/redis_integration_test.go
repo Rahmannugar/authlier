@@ -7,8 +7,8 @@ import (
 	"testing"
 	"time"
 
-	authlierredis "github.com/Rahmannugar/authlier/redis"
 	"github.com/Rahmannugar/authlier/sessiontoken"
+	authlierredis "github.com/Rahmannugar/authlier/storage/redis"
 	redislibrary "github.com/redis/go-redis/v9"
 )
 

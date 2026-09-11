@@ -6,7 +6,7 @@ methods.
 
 ## PostgreSQL
 
-The `postgres` package is the first complete adapter. Its migration creates the
+The `storage/postgres` package is the first complete adapter. Its migration creates the
 complete Authlier schema, including tables for sign-in methods you have not yet
 enabled. Empty tables use little space, and enabling another method later does
 not require selecting another migration set.
@@ -17,17 +17,22 @@ ID.
 
 ## Redis
 
-The current `redis` package provides an optional session cache. PostgreSQL is
+The current `storage/redis` package provides an optional session cache. PostgreSQL is
 still the durable session authority when this cache is used.
 
 A complete Redis database adapter is planned separately. It will allow Redis to
 be the primary Authlier database when Redis persistence, replication, and
 backups are configured appropriately.
 
-## MySQL and MongoDB
+## MySQL
 
-Complete MySQL and MongoDB adapters are planned. They will use the same
-top-level Authlier configuration as PostgreSQL.
+The `storage/mysql` package is a complete adapter. Its migration is repeatable
+because MySQL commits schema statements even when they run inside a transaction.
+
+## MongoDB
+
+A complete MongoDB adapter is planned. It will use the same top-level Authlier
+configuration as PostgreSQL and MySQL.
 
 ## Supported versions
 
@@ -35,7 +40,8 @@ CI runs each completed adapter against two database versions:
 
 - PostgreSQL 17 and 18.
 - Redis 7.4 and 8.
-- MySQL and MongoDB will receive two-version coverage with their adapters.
+- MySQL 8.4 and the current MySQL 9 release.
+- MongoDB will receive two-version coverage with its adapter.
 
 ## Secrets
 

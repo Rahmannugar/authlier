@@ -10,15 +10,32 @@ permissions:
 
 jobs:
   validate:
-    name: Test, vet, and build (PostgreSQL ${{ matrix.postgres }}, Redis ${{ matrix.redis }})
+    name: Test, vet, and build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Verify formatting
+        run: test -z "$(gofmt -l .)"
+      - name: Test
+        run: go test ./...
+      - name: Vet
+        run: go vet ./...
+      - name: Build
+        run: go build ./...
+
+  postgres:
+    name: PostgreSQL ${{ matrix.version }}
     runs-on: ubuntu-latest
     strategy:
       matrix:
-        postgres: [17, 18]
-        redis: [7.4, 8]
+        version: [17, 18]
     services:
-      postgres:
-        image: postgres:${{ matrix.postgres }}
+      database:
+        image: postgres:${{ matrix.version }}
         env:
           POSTGRES_DB: authlier_test
           POSTGRES_PASSWORD: authlier_test
@@ -30,8 +47,56 @@ jobs:
           --health-interval 5s
           --health-timeout 5s
           --health-retries 10
-      redis:
-        image: redis:${{ matrix.redis }}
+    env:
+      AUTHLIER_POSTGRES_TEST_DSN: postgres://authlier_test:authlier_test@localhost:5432/authlier_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go test -race ./storage/postgres
+
+  mysql:
+    name: MySQL ${{ matrix.version }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        version: [8.4, 9]
+    services:
+      database:
+        image: mysql:${{ matrix.version }}
+        env:
+          MYSQL_DATABASE: authlier_test
+          MYSQL_PASSWORD: authlier_test
+          MYSQL_ROOT_PASSWORD: authlier_root
+          MYSQL_USER: authlier_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -u root -pauthlier_root"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      AUTHLIER_MYSQL_TEST_DSN: authlier_test:authlier_test@tcp(127.0.0.1:3306)/authlier_test?parseTime=true&loc=UTC
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go test -race ./storage/mysql
+
+  redis:
+    name: Redis ${{ matrix.version }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        version: [7.4, 8]
+    services:
+      database:
+        image: redis:${{ matrix.version }}
         ports:
           - 6379:6379
         options: >-
@@ -40,26 +105,11 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
-      AUTHLIER_POSTGRES_TEST_DSN: postgres://authlier_test:authlier_test@localhost:5432/authlier_test?sslmode=disable
       AUTHLIER_REDIS_TEST_ADDRESS: localhost:6379
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v6
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
-
-      - name: Verify formatting
-        run: test -z "$(gofmt -l .)"
-
-      - name: Test
-        run: go test ./...
-
-      - name: Vet
-        run: go vet ./...
-
-      - name: Build
-        run: go build ./...
+      - run: go test -race ./storage/redis

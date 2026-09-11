@@ -23,6 +23,9 @@ if err := database.Migrate(ctx); err != nil {
 `Migrate` creates Authlier's tables. It is safe to call again on later starts.
 Creating the adapter alone does not change the database.
 
+MySQL uses the same setup with `storage/mysql` and a `*sql.DB`. Configure the
+MySQL driver with `parseTime=true` and UTC timestamps.
+
 ## Configure Authlier
 
 ```go

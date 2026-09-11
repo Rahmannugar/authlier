@@ -25,8 +25,9 @@ authlier/
   sessiontoken/      Opaque server-side session lifecycle and caching
   token/             Opaque token generation and hashing
   totp/              Authenticator-app MFA and recovery codes
-	postgres/          PostgreSQL storage adapter and migrations
-	redis/             Optional Redis session cache
+	storage/postgres/  PostgreSQL storage adapter and migrations
+	storage/mysql/     MySQL storage adapter and migrations
+	storage/redis/     Redis storage and session caching
 ```
 
 ## Sessions

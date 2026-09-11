@@ -15,7 +15,7 @@ import (
 	"github.com/Rahmannugar/authlier"
 	"github.com/Rahmannugar/authlier/emailpassword"
 	"github.com/Rahmannugar/authlier/oidc"
-	"github.com/Rahmannugar/authlier/postgres"
+	"github.com/Rahmannugar/authlier/storage/postgres"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
 )
