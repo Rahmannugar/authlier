@@ -15,6 +15,7 @@ authlier/
   emailpassword/     Email/password registration and login orchestration
   emailverification/ Email ownership verification
   googleoauth/       Google Authorization Code flow and account linking
+  passkey/           WebAuthn passkey registration and sign-in
   password/          Argon2id and bcrypt password hashing
   passwordreset/     Password recovery
   refreshtoken/      Opaque refresh-token rotation and reuse detection
@@ -96,6 +97,12 @@ to an existing local account requires an authenticated user.
 Enrollment becomes active only after a valid authenticator code. Login uses a
 short-lived challenge created after the primary credential succeeds. TOTP
 counters and recovery codes can each authenticate only once.
+
+## Passkeys
+
+Passkey registration belongs to an authenticated user. Sign-in discovers the
+user from the credential ID and stable WebAuthn user handle. Each ceremony is
+short-lived, and credential updates consume the ceremony atomically.
 
 ## Persistence and caching
 

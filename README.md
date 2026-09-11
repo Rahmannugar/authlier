@@ -63,6 +63,12 @@ The `totp` package handles authenticator enrollment, short-lived MFA
 challenges, and single-use recovery codes. Applications must require recent
 authentication before enrollment or removal and encrypt TOTP secrets at rest.
 
+## Passkeys
+
+The `passkey` package handles discoverable WebAuthn registration and sign-in.
+Applications store the ceremony state and full credential records through the
+package interfaces. Passkey enrollment and removal require recent authentication.
+
 ## Sessions
 
 Authlier supports two ways to manage authenticated sessions:
