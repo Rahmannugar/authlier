@@ -128,7 +128,7 @@ func TestMySQLAdapter(t *testing.T) {
 	})
 
 	t.Run("session extension and account-wide revocation are atomic", func(t *testing.T) {
-		now := time.Now().UTC()
+		now := time.Now().UTC().Truncate(time.Microsecond)
 		var hash sessiontoken.TokenHash
 		hash[0] = 3
 		record := sessiontoken.Record{SubjectID: "session-user", TokenHash: hash, CreatedAt: now, ExpiresAt: now.Add(time.Hour)}
