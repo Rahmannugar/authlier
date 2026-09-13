@@ -20,8 +20,9 @@ See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the package boundaries.
 
 ## Getting started
 
-Create a PostgreSQL adapter, pass it to `authlier.New`, and mount
-`auth.Handler()`. Redis can optionally cache sessions. See
+Create a supported database adapter, pass it to `authlier.New`, and mount
+`auth.Handler()`. Official adapters are available for PostgreSQL, MySQL,
+MongoDB, and Redis. Redis can also be used only as a session cache. See
 [`docs/getting-started.md`](docs/getting-started.md) for a working setup and
 [`docs/storage.md`](docs/storage.md) for adapter details.
 

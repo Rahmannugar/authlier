@@ -17,12 +17,12 @@ ID.
 
 ## Redis
 
-The current `storage/redis` package provides an optional session cache. PostgreSQL is
-still the durable session authority when this cache is used.
+The `storage/redis` package provides a complete database adapter and a separate
+optional session cache. Use `redis.New` when Redis is Authlier's database. Use
+`redis.NewSessionCache` when another adapter remains the database.
 
-A complete Redis database adapter is planned separately. It will allow Redis to
-be the primary Authlier database when Redis persistence, replication, and
-backups are configured appropriately.
+A primary Redis deployment needs persistence, replication, backups, and tested
+recovery. Authlier does not change those Redis server settings.
 
 ## MySQL
 
@@ -31,8 +31,9 @@ because MySQL commits schema statements even when they run inside a transaction.
 
 ## MongoDB
 
-A complete MongoDB adapter is planned. It will use the same top-level Authlier
-configuration as PostgreSQL and MySQL.
+The `storage/mongodb` package is a complete adapter. `Migrate` creates its
+indexes. Connect it to a replica set or sharded cluster because authentication
+operations that change several documents use MongoDB transactions.
 
 ## Supported versions
 
@@ -41,14 +42,14 @@ CI runs each completed adapter against two database versions:
 - PostgreSQL 17 and 18.
 - Redis 7.4 and 8.
 - MySQL 8.4 and the current MySQL 9 release.
-- MongoDB will receive two-version coverage with its adapter.
+- MongoDB 7 and 8.
 
 ## Secrets
 
-The PostgreSQL TOTP store requires a `SecretCodec`. The application supplies
-the encryption keys and controls key rotation. Authlier stores recovery codes,
-session tokens, reset tokens, and verification tokens as hashes rather than raw
-values.
+Each complete adapter's TOTP store requires a `SecretCodec`. The application
+supplies the encryption keys and controls key rotation. Authlier stores
+recovery codes, session tokens, reset tokens, and verification tokens as hashes
+rather than raw values.
 
 ## Custom databases
 

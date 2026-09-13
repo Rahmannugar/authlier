@@ -26,6 +26,43 @@ Creating the adapter alone does not change the database.
 MySQL uses the same setup with `storage/mysql` and a `*sql.DB`. Configure the
 MySQL driver with `parseTime=true` and UTC timestamps.
 
+MongoDB uses its official Go driver:
+
+```go
+client, err := mongo.Connect(options.Client().ApplyURI(os.Getenv("MONGODB_URI")))
+if err != nil {
+	return err
+}
+
+database, err := mongodb.New(client, "acme", mongodb.Config{})
+if err != nil {
+	return err
+}
+if err := database.Migrate(ctx); err != nil {
+	return err
+}
+```
+
+The MongoDB deployment must support transactions, so use a replica set or a
+sharded cluster rather than a standalone server.
+
+Redis can also be the database:
+
+```go
+database, err := authlierredis.New(redisClient, authlierredis.Config{
+	KeyPrefix: "acme",
+})
+if err != nil {
+	return err
+}
+if err := database.Migrate(ctx); err != nil {
+	return err
+}
+```
+
+For primary storage, configure Redis persistence, replication, backups, and
+recovery outside Authlier.
+
 ## Configure Authlier
 
 ```go
@@ -96,8 +133,8 @@ Cache:    cache,
 CacheTTL: 5 * time.Minute,
 ```
 
-PostgreSQL remains the session authority in this setup. Redis only makes
-session lookup faster.
+The configured database remains the session authority in this setup. The
+session cache only makes session lookup faster.
 
 The lower-level authentication managers remain public for applications that
 need custom routes or flows.

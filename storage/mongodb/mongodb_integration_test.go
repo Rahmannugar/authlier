@@ -1,9 +1,8 @@
-package redis_test
+package mongodb_test
 
 import (
 	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -23,33 +22,47 @@ import (
 	"github.com/Rahmannugar/authlier/refreshtoken"
 	"github.com/Rahmannugar/authlier/saml"
 	"github.com/Rahmannugar/authlier/sessiontoken"
-	authlierredis "github.com/Rahmannugar/authlier/storage/redis"
+	authliermongodb "github.com/Rahmannugar/authlier/storage/mongodb"
 	"github.com/Rahmannugar/authlier/totp"
 	"github.com/google/uuid"
-	redislibrary "github.com/redis/go-redis/v9"
+	"go.mongodb.org/mongo-driver/v2/bson"
+	"go.mongodb.org/mongo-driver/v2/mongo"
+	"go.mongodb.org/mongo-driver/v2/mongo/options"
 )
 
-func TestRedisAdapter(t *testing.T) {
-	address := os.Getenv("AUTHLIER_REDIS_TEST_ADDRESS")
-	if address == "" {
-		t.Skip("AUTHLIER_REDIS_TEST_ADDRESS is not set")
+func TestMongoDBAdapter(t *testing.T) {
+	uri := os.Getenv("AUTHLIER_MONGODB_TEST_URI")
+	if uri == "" {
+		t.Skip("AUTHLIER_MONGODB_TEST_URI is not set")
 	}
 	ctx := context.Background()
-	client := redislibrary.NewClient(&redislibrary.Options{Addr: address})
-	t.Cleanup(func() { _ = client.Close() })
-	if err := client.FlushDB(ctx).Err(); err != nil {
-		t.Fatalf("flush Redis: %v", err)
+	client, err := mongo.Connect(options.Client().ApplyURI(uri))
+	if err != nil {
+		t.Fatalf("connect MongoDB: %v", err)
 	}
-	adapter, err := authlierredis.New(client, authlierredis.Config{KeyPrefix: "authlier-test", Secrets: testCodec{}})
+	t.Cleanup(func() { _ = client.Disconnect(ctx) })
+	if err := client.Ping(ctx, nil); err != nil {
+		t.Fatalf("ping MongoDB: %v", err)
+	}
+	database := client.Database("authlier_test")
+	if err := database.Drop(ctx); err != nil {
+		t.Fatalf("clean MongoDB: %v", err)
+	}
+	adapter, err := authliermongodb.New(client, database.Name(), authliermongodb.Config{Secrets: testCodec{}})
 	if err != nil {
 		t.Fatalf("create adapter: %v", err)
 	}
 	if err := adapter.Migrate(ctx); err != nil {
-		t.Fatalf("check Redis: %v", err)
+		t.Fatalf("migrate: %v", err)
+	}
+	if err := adapter.Migrate(ctx); err != nil {
+		t.Fatalf("repeat migration: %v", err)
 	}
 
 	t.Run("registration uses UUIDv7 and a private user handle", func(t *testing.T) {
-		user, err := adapter.EmailPassword().Register(ctx, emailpassword.Registration{Email: "owner@example.com", PasswordHash: "encoded-password-hash", CreatedAt: time.Now().UTC()})
+		user, err := adapter.EmailPassword().Register(ctx, emailpassword.Registration{
+			Email: "owner@example.com", PasswordHash: "encoded-password-hash", CreatedAt: time.Now().UTC(),
+		})
 		if err != nil {
 			t.Fatalf("register: %v", err)
 		}
@@ -57,20 +70,22 @@ func TestRedisAdapter(t *testing.T) {
 		if err != nil || userID.Version() != 7 {
 			t.Fatalf("user ID %q is not UUIDv7", user.ID)
 		}
-		encoded, err := client.HGet(ctx, "{authlier-test}:users", user.ID).Bytes()
-		if err != nil {
-			t.Fatalf("read user: %v", err)
+		var document struct {
+			Handle []byte `bson:"webauthn_handle"`
 		}
-		var stored struct{ WebAuthnHandle []byte }
-		if err := json.Unmarshal(encoded, &stored); err != nil || len(stored.WebAuthnHandle) != 64 {
-			t.Fatalf("user handle length = %d, error=%v", len(stored.WebAuthnHandle), err)
+		if err := database.Collection("authlier_users").FindOne(ctx, bson.M{"_id": user.ID}).Decode(&document); err != nil {
+			t.Fatalf("read user handle: %v", err)
+		}
+		if len(document.Handle) != 64 {
+			t.Fatalf("user handle length = %d, want 64", len(document.Handle))
 		}
 	})
 
 	t.Run("mounted handler signs up and resolves a session", func(t *testing.T) {
 		configured, err := authlier.New(authlier.Config{
 			AppName: "Authlier test", BaseURL: "https://app.example.com", Database: adapter,
-			EmailAndPassword: authlier.EmailAndPasswordConfig{Enabled: true}, Session: authlier.SessionConfig{Lifetime: 24 * time.Hour},
+			EmailAndPassword: authlier.EmailAndPasswordConfig{Enabled: true},
+			Session:          authlier.SessionConfig{Lifetime: 24 * time.Hour},
 		})
 		if err != nil {
 			t.Fatalf("configure Authlier: %v", err)
@@ -82,8 +97,12 @@ func TestRedisAdapter(t *testing.T) {
 		if response.Code != http.StatusCreated {
 			t.Fatalf("sign up status = %d, body = %s", response.Code, response.Body.String())
 		}
+		cookies := response.Result().Cookies()
+		if len(cookies) != 1 || !cookies[0].HttpOnly || !cookies[0].Secure {
+			t.Fatalf("unexpected session cookie: %#v", cookies)
+		}
 		request := httptest.NewRequest(http.MethodGet, "/api/auth/session", nil)
-		request.AddCookie(response.Result().Cookies()[0])
+		request.AddCookie(cookies[0])
 		response = httptest.NewRecorder()
 		configured.Handler().ServeHTTP(response, request)
 		if response.Code != http.StatusOK {
@@ -91,32 +110,48 @@ func TestRedisAdapter(t *testing.T) {
 		}
 	})
 
-	t.Run("verification and reset tokens are replaced and consumed", func(t *testing.T) {
-		user, err := adapter.EmailPassword().Register(ctx, emailpassword.Registration{Email: "tokens@example.com", PasswordHash: "old-hash", CreatedAt: time.Now().UTC()})
+	t.Run("verification issue replaces the previous token", func(t *testing.T) {
+		user, err := adapter.EmailPassword().Register(ctx, emailpassword.Registration{Email: "verify@example.com", PasswordHash: "hash", CreatedAt: time.Now().UTC()})
 		if err != nil {
 			t.Fatalf("register: %v", err)
 		}
 		now := time.Now().UTC()
-		verification := emailverification.Record{UserID: user.ID, Email: user.Email, CreatedAt: now, ExpiresAt: now.Add(time.Hour)}
-		verification.TokenHash[0] = 1
-		if err := adapter.EmailVerification().Issue(ctx, verification); err != nil {
-			t.Fatalf("issue verification: %v", err)
+		first := emailverification.Record{UserID: user.ID, Email: user.Email, CreatedAt: now, ExpiresAt: now.Add(time.Hour)}
+		first.TokenHash[0] = 1
+		second := first
+		second.TokenHash[0] = 2
+		if err := adapter.EmailVerification().Issue(ctx, first); err != nil {
+			t.Fatalf("issue first verification: %v", err)
 		}
-		verified, err := adapter.EmailVerification().Verify(ctx, verification.TokenHash, now)
+		if err := adapter.EmailVerification().Issue(ctx, second); err != nil {
+			t.Fatalf("replace verification: %v", err)
+		}
+		verified, err := adapter.EmailVerification().Verify(ctx, second.TokenHash, now)
 		if err != nil || !verified.Verified {
 			t.Fatalf("verify: user=%#v err=%v", verified, err)
 		}
-		reset := passwordreset.Record{UserID: user.ID, Email: user.Email, CreatedAt: now, ExpiresAt: now.Add(time.Hour)}
-		reset.TokenHash[0] = 2
-		if err := adapter.PasswordReset().Issue(ctx, reset); err != nil {
-			t.Fatalf("issue reset: %v", err)
+	})
+
+	t.Run("password reset replaces the credential and consumes the token", func(t *testing.T) {
+		user, err := adapter.EmailPassword().Register(ctx, emailpassword.Registration{Email: "reset@example.com", PasswordHash: "old-hash", CreatedAt: time.Now().UTC()})
+		if err != nil {
+			t.Fatalf("register: %v", err)
 		}
-		if _, err := adapter.PasswordReset().ResetPassword(ctx, reset.TokenHash, "new-hash", now); err != nil {
+		now := time.Now().UTC()
+		record := passwordreset.Record{UserID: user.ID, Email: user.Email, CreatedAt: now, ExpiresAt: now.Add(time.Hour)}
+		record.TokenHash[0] = 10
+		if err := adapter.PasswordReset().Issue(ctx, record); err != nil {
+			t.Fatalf("issue password reset: %v", err)
+		}
+		if _, err := adapter.PasswordReset().ResetPassword(ctx, record.TokenHash, "new-hash", now); err != nil {
 			t.Fatalf("reset password: %v", err)
 		}
 		_, credential, err := adapter.EmailPassword().FindBySubject(ctx, user.ID)
 		if err != nil || credential.PasswordHash != "new-hash" {
 			t.Fatalf("credential=%#v err=%v", credential, err)
+		}
+		if _, err := adapter.PasswordReset().ResetPassword(ctx, record.TokenHash, "another-hash", now); !errors.Is(err, passwordreset.ErrNotFound) {
+			t.Fatalf("replayed password reset error = %v", err)
 		}
 	})
 
@@ -132,7 +167,7 @@ func TestRedisAdapter(t *testing.T) {
 	})
 
 	t.Run("session extension and account-wide revocation are atomic", func(t *testing.T) {
-		now := time.Now().UTC()
+		now := time.Now().UTC().Truncate(time.Millisecond)
 		var hash sessiontoken.TokenHash
 		hash[0] = 3
 		record := sessiontoken.Record{SubjectID: "session-user", TokenHash: hash, CreatedAt: now, ExpiresAt: now.Add(time.Hour)}
@@ -150,13 +185,13 @@ func TestRedisAdapter(t *testing.T) {
 	})
 
 	t.Run("refresh-token reuse revokes the access session", func(t *testing.T) {
-		now := time.Now().UTC()
+		now := time.Now().UTC().Truncate(time.Millisecond)
 		access := authlier.AccessSession{ID: "access-session", SubjectID: "refresh-user", CreatedAt: now, ExpiresAt: now.Add(time.Hour)}
 		if err := adapter.AccessSessions().Create(ctx, access); err != nil {
 			t.Fatalf("create access session: %v", err)
 		}
 		var currentHash, replacementHash refreshtoken.TokenHash
-		currentHash[0], replacementHash[0] = 4, 5
+		currentHash[0], replacementHash[0] = 11, 12
 		current := refreshtoken.Record{SessionID: access.ID, TokenHash: currentHash, CreatedAt: now, ExpiresAt: now.Add(time.Hour)}
 		replacement := refreshtoken.Record{SessionID: access.ID, TokenHash: replacementHash, CreatedAt: now, ExpiresAt: now.Add(time.Hour)}
 		if err := adapter.RefreshTokens().Create(ctx, current); err != nil {
@@ -175,16 +210,14 @@ func TestRedisAdapter(t *testing.T) {
 
 	t.Run("TOTP enrollment and challenge enforce one-time use", func(t *testing.T) {
 		now := time.Now().UTC()
-		var recoveryCode totp.RecoveryCodeHash
-		recoveryCode[0] = 11
 		if err := adapter.TOTP().BeginEnrollment(ctx, totp.Enrollment{SubjectID: "totp-user", Secret: "secret", CreatedAt: now, ExpiresAt: now.Add(time.Hour)}); err != nil {
 			t.Fatalf("begin enrollment: %v", err)
 		}
-		if err := adapter.TOTP().Enable(ctx, "totp-user", 1, []totp.RecoveryCodeHash{recoveryCode}, now); err != nil {
+		if err := adapter.TOTP().Enable(ctx, "totp-user", 1, nil, now); err != nil {
 			t.Fatalf("enable TOTP: %v", err)
 		}
 		var challengeHash totp.ChallengeHash
-		challengeHash[0] = 6
+		challengeHash[0] = 5
 		if err := adapter.TOTP().CreateChallenge(ctx, totp.Challenge{SubjectID: "totp-user", TokenHash: challengeHash, CreatedAt: now, ExpiresAt: now.Add(time.Minute)}); err != nil {
 			t.Fatalf("create challenge: %v", err)
 		}
@@ -193,20 +226,6 @@ func TestRedisAdapter(t *testing.T) {
 		}
 		if _, err := adapter.TOTP().CompleteCode(ctx, challengeHash, 3, now); !errors.Is(err, totp.ErrInactiveChallenge) {
 			t.Fatalf("replayed challenge error = %v", err)
-		}
-		challengeHash[0] = 12
-		if err := adapter.TOTP().CreateChallenge(ctx, totp.Challenge{SubjectID: "totp-user", TokenHash: challengeHash, CreatedAt: now, ExpiresAt: now.Add(time.Minute)}); err != nil {
-			t.Fatalf("create recovery challenge: %v", err)
-		}
-		if _, err := adapter.TOTP().CompleteRecovery(ctx, challengeHash, recoveryCode, now); err != nil {
-			t.Fatalf("complete recovery: %v", err)
-		}
-		challengeHash[0] = 13
-		if err := adapter.TOTP().CreateChallenge(ctx, totp.Challenge{SubjectID: "totp-user", TokenHash: challengeHash, CreatedAt: now, ExpiresAt: now.Add(time.Minute)}); err != nil {
-			t.Fatalf("create second recovery challenge: %v", err)
-		}
-		if _, err := adapter.TOTP().CompleteRecovery(ctx, challengeHash, recoveryCode, now); !errors.Is(err, totp.ErrInvalidCode) {
-			t.Fatalf("reused recovery code error = %v", err)
 		}
 	})
 
@@ -217,7 +236,7 @@ func TestRedisAdapter(t *testing.T) {
 		}
 		now := time.Now().UTC()
 		var ceremonyHash passkey.CeremonyHash
-		ceremonyHash[0] = 7
+		ceremonyHash[0] = 6
 		ceremony := passkey.Ceremony{Type: passkey.CeremonyRegistration, TokenHash: ceremonyHash, SubjectID: user.ID, CreatedAt: now, ExpiresAt: now.Add(time.Minute)}
 		if err := adapter.Passkeys().CreateCeremony(ctx, ceremony); err != nil {
 			t.Fatalf("create ceremony: %v", err)
@@ -234,22 +253,22 @@ func TestRedisAdapter(t *testing.T) {
 	t.Run("SAML request state is consumed once", func(t *testing.T) {
 		now := time.Now().UTC()
 		var request saml.Request
-		request.StateHash[0], request.ConnectionHash[0] = 8, 9
+		request.StateHash[0], request.ConnectionHash[0] = 7, 8
 		request.ConnectionID, request.RequestID, request.CreatedAt, request.ExpiresAt = "organization", "request", now, now.Add(time.Minute)
 		if err := adapter.SAML().CreateRequest(ctx, request); err != nil {
-			t.Fatalf("create request: %v", err)
+			t.Fatalf("create SAML request: %v", err)
 		}
 		if _, err := adapter.SAML().ConsumeRequest(ctx, request.StateHash, now); err != nil {
-			t.Fatalf("consume request: %v", err)
+			t.Fatalf("consume SAML request: %v", err)
 		}
 		if _, err := adapter.SAML().ConsumeRequest(ctx, request.StateHash, now); !errors.Is(err, saml.ErrNotFound) {
-			t.Fatalf("replayed request error = %v", err)
+			t.Fatalf("replayed SAML request error = %v", err)
 		}
 	})
 
 	t.Run("OIDC state is consumed once under concurrency", func(t *testing.T) {
 		var stateHash oidc.StateHash
-		stateHash[0] = 10
+		stateHash[0] = 9
 		now := time.Now().UTC()
 		if err := adapter.OIDC().CreateChallenge(ctx, oidc.Challenge{StateHash: stateHash, ConnectionID: "organization", Issuer: "https://idp.example.com", ClientID: "client", RedirectURL: "https://app.example.com/callback", Scopes: []string{"openid"}, Nonce: "nonce", CodeVerifier: "verifier", CreatedAt: now, ExpiresAt: now.Add(time.Minute)}); err != nil {
 			t.Fatalf("create challenge: %v", err)
@@ -285,43 +304,4 @@ func (testCodec) Encrypt(_ context.Context, plaintext []byte) ([]byte, error) {
 
 func (testCodec) Decrypt(_ context.Context, ciphertext []byte) ([]byte, error) {
 	return append([]byte(nil), ciphertext...), nil
-}
-
-func TestSessionCache(t *testing.T) {
-	address := os.Getenv("AUTHLIER_REDIS_TEST_ADDRESS")
-	if address == "" {
-		t.Skip("AUTHLIER_REDIS_TEST_ADDRESS is not set")
-	}
-	ctx := context.Background()
-	client := redislibrary.NewClient(&redislibrary.Options{Addr: address})
-	t.Cleanup(func() { _ = client.Close() })
-	if err := client.FlushDB(ctx).Err(); err != nil {
-		t.Fatalf("flush Redis: %v", err)
-	}
-	cache, err := authlierredis.NewSessionCache(client, "authlier-test")
-	if err != nil {
-		t.Fatalf("create cache: %v", err)
-	}
-	var tokenHash sessiontoken.TokenHash
-	tokenHash[0] = 1
-	now := time.Now().UTC()
-	record := sessiontoken.Record{
-		SubjectID: "user",
-		TokenHash: tokenHash,
-		CreatedAt: now,
-		ExpiresAt: now.Add(time.Hour),
-	}
-	if err := cache.Set(ctx, record, time.Minute); err != nil {
-		t.Fatalf("set session: %v", err)
-	}
-	found, err := cache.Get(ctx, tokenHash)
-	if err != nil || found.SubjectID != record.SubjectID || found.TokenHash != tokenHash {
-		t.Fatalf("get session: record=%+v error=%v", found, err)
-	}
-	if err := cache.Delete(ctx, tokenHash); err != nil {
-		t.Fatalf("delete session: %v", err)
-	}
-	if _, err := cache.Get(ctx, tokenHash); !errors.Is(err, sessiontoken.ErrCacheMiss) {
-		t.Fatalf("cache miss: got %v", err)
-	}
 }

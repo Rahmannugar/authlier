@@ -27,6 +27,7 @@ authlier/
   totp/              Authenticator-app MFA and recovery codes
 	storage/postgres/  PostgreSQL storage adapter and migrations
 	storage/mysql/     MySQL storage adapter and migrations
+	storage/mongodb/   MongoDB storage adapter and indexes
 	storage/redis/     Redis storage and session caching
 ```
 

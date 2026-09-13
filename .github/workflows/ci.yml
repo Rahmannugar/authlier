@@ -88,6 +88,31 @@ jobs:
           cache: true
       - run: go test -race ./storage/mysql
 
+  mongodb:
+    name: MongoDB ${{ matrix.mongodb }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        mongodb: [7, 8]
+    env:
+      AUTHLIER_MONGODB_TEST_URI: mongodb://localhost:27017/?replicaSet=rs0&directConnection=true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Start MongoDB replica set
+        run: |
+          docker run --detach --name authlier-mongodb --publish 27017:27017 \
+            mongo:${{ matrix.mongodb }} --replSet rs0 --bind_ip_all
+          timeout 60 bash -c 'until docker exec authlier-mongodb mongosh --quiet --eval "db.adminCommand({ping:1}).ok"; do sleep 1; done'
+          docker exec authlier-mongodb mongosh --quiet --eval \
+            'rs.initiate({_id:"rs0",members:[{_id:0,host:"localhost:27017"}]})'
+          timeout 60 bash -c 'until docker exec authlier-mongodb mongosh --quiet --eval "quit(rs.status().myState === 1 ? 0 : 1)"; do sleep 1; done'
+      - run: go test -race ./storage/mongodb
+
   redis:
     name: Redis ${{ matrix.version }}
     runs-on: ubuntu-latest
