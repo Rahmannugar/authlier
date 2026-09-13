@@ -248,6 +248,24 @@ func (manager *Manager) Verify(ctx context.Context, input VerifyInput) (User, er
 	return user, nil
 }
 
+func (manager *Manager) IsVerified(ctx context.Context, email string) (bool, error) {
+	normalizedEmail, err := manager.normalizeEmail(email)
+	if err != nil || !emailaddress.Valid(normalizedEmail) {
+		return false, nil
+	}
+	user, err := manager.store.FindUserByEmail(ctx, normalizedEmail)
+	if errors.Is(err, ErrNotFound) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("find email verification status: %w", err)
+	}
+	if err := validUser(user, normalizedEmail); err != nil {
+		return false, err
+	}
+	return user.Verified, nil
+}
+
 func (manager *Manager) checkAttempt(ctx context.Context, attempt Attempt) error {
 	if manager.attemptGuard == nil {
 		return nil

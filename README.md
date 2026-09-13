@@ -108,6 +108,10 @@ all sessions for an account, with cache invalidation after durable revocation.
 Security reports should be submitted privately according to
 [`SECURITY.md`](SECURITY.md).
 
+## Contributing
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) for development and testing guidance.
+
 ## License
 
 Authlier is licensed under the Apache License 2.0.

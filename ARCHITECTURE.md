@@ -10,7 +10,7 @@ policy, and delivery hooks and owns access permissions.
 
 ```text
 authlier/
-	root package        Configuration, standard HTTP routes, and session lookup
+  root package        Configuration, standard HTTP routes, and session lookup
   accesstoken/       Ed25519 JWT access-token issuance and verification
   emailaddress/      Shared email normalization
   emailpassword/     Email/password registration and login orchestration
@@ -25,10 +25,10 @@ authlier/
   sessiontoken/      Opaque server-side session lifecycle and caching
   token/             Opaque token generation and hashing
   totp/              Authenticator-app MFA and recovery codes
-	storage/postgres/  PostgreSQL storage adapter and migrations
-	storage/mysql/     MySQL storage adapter and migrations
-	storage/mongodb/   MongoDB storage adapter and indexes
-	storage/redis/     Redis storage and session caching
+  storage/postgres/  PostgreSQL storage adapter and migrations
+  storage/mysql/     MySQL storage adapter and migrations
+  storage/mongodb/   MongoDB storage adapter and indexes
+  storage/redis/     Redis storage and session caching
 ```
 
 ## Sessions
@@ -90,9 +90,8 @@ token replaces the earlier one. Email verification consumes the token and marks
 the same email as verified in one storage operation. Password reset consumes
 the token and replaces the password in one storage operation.
 
-The public HTTP handler must return the same response for every email. It should
-queue this work and return without waiting for the account lookup or email
-delivery.
+The public request endpoints return the same response whether an email exists
+or not. Mail senders should hand delivery to a queue quickly.
 
 ## Google authentication
 

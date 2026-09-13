@@ -1,9 +1,13 @@
 # Getting started
 
-Create a database adapter, configure Authlier once, and mount its handler in
-your Go server.
+Install Authlier and the adapter for your database:
 
-## PostgreSQL
+```bash
+go get github.com/Rahmannugar/authlier
+go get github.com/Rahmannugar/authlier/storage/postgres
+```
+
+Create Authlier once during application startup:
 
 ```go
 pool, err := pgxpool.New(ctx, os.Getenv("DATABASE_URL"))
@@ -18,66 +22,13 @@ if err != nil {
 if err := database.Migrate(ctx); err != nil {
 	return err
 }
-```
 
-`Migrate` creates Authlier's tables. It is safe to call again on later starts.
-Creating the adapter alone does not change the database.
-
-MySQL uses the same setup with `storage/mysql` and a `*sql.DB`. Configure the
-MySQL driver with `parseTime=true` and UTC timestamps.
-
-MongoDB uses its official Go driver:
-
-```go
-client, err := mongo.Connect(options.Client().ApplyURI(os.Getenv("MONGODB_URI")))
-if err != nil {
-	return err
-}
-
-database, err := mongodb.New(client, "acme", mongodb.Config{})
-if err != nil {
-	return err
-}
-if err := database.Migrate(ctx); err != nil {
-	return err
-}
-```
-
-The MongoDB deployment must support transactions, so use a replica set or a
-sharded cluster rather than a standalone server.
-
-Redis can also be the database:
-
-```go
-database, err := authlierredis.New(redisClient, authlierredis.Config{
-	KeyPrefix: "acme",
-})
-if err != nil {
-	return err
-}
-if err := database.Migrate(ctx); err != nil {
-	return err
-}
-```
-
-For primary storage, configure Redis persistence, replication, backups, and
-recovery outside Authlier.
-
-## Configure Authlier
-
-```go
 auth, err := authlier.New(authlier.Config{
 	AppName:  "Acme",
 	BaseURL:  "https://app.example.com",
 	Database: database,
 	EmailAndPassword: authlier.EmailAndPasswordConfig{
 		Enabled: true,
-		ValidatePassword: func(password string) error {
-			if len(password) < 12 {
-				return errors.New("password must have at least 12 characters")
-			}
-			return nil
-		},
 	},
 	Session: authlier.SessionConfig{
 		Lifetime: 24 * time.Hour,
@@ -90,21 +41,18 @@ if err != nil {
 http.Handle("/api/auth/", auth.Handler())
 ```
 
-The default routes are:
+The application now has these routes:
 
 - `POST /api/auth/sign-up/email`
 - `POST /api/auth/sign-in/email`
 - `POST /api/auth/sign-out`
 - `GET /api/auth/session`
 
-Signup and signin accept JSON containing `email` and `password`. Authlier sets
-an HttpOnly session cookie after either request succeeds. The cookie is Secure
-when `BaseURL` uses HTTPS.
+Signup and signin accept `email` and `password` as JSON. Successful requests
+set an HttpOnly session cookie. Authlier marks the cookie Secure when `BaseURL`
+uses HTTPS.
 
-Browser requests that change authentication state must come from `BaseURL` or
-an origin listed in `TrustedOrigins`.
-
-## Read a session in application code
+Use the session in another handler:
 
 ```go
 session, err := auth.ResolveSession(r)
@@ -116,25 +64,17 @@ if err != nil {
 userID := session.SubjectID
 ```
 
-The application uses the authenticated user ID for its own authorization. For
-example, the application still decides which organizations and records that
-user may access.
+Your application uses `userID` for its own permissions and data access.
 
-## Optional Redis session cache
+## Optional features
 
-```go
-cache, err := authlierredis.NewSessionCache(redisClient, "acme")
-if err != nil {
-	return err
-}
+Email verification adds `/send-verification-email` and `/verify-email`.
+Password recovery adds `/forgot-password` and `/reset-password`. Enable them in
+the same `authlier.Config` and provide mail senders from your application.
 
-// Add these fields to SessionConfig.
-Cache:    cache,
-CacheTTL: 5 * time.Minute,
-```
+Optional features use the same configuration. Authlier registers their routes
+only when each feature is enabled.
 
-The configured database remains the session authority in this setup. The
-session cache only makes session lookup faster.
-
-The lower-level authentication managers remain public for applications that
-need custom routes or flows.
+See [storage.md](storage.md) for MySQL, MongoDB, Redis, migrations, and session
+caching. SSO setup is documented separately because the application must map
+the returned provider identity to one of its users.

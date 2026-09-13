@@ -157,6 +157,9 @@ func TestMySQLAdapter(t *testing.T) {
 		if err := adapter.TOTP().Enable(ctx, "totp-user", 1, []totp.RecoveryCodeHash{recovery}, now); err != nil {
 			t.Fatalf("enable TOTP: %v", err)
 		}
+		if enabled, err := adapter.TOTP().IsEnabled(ctx, "totp-user"); err != nil || !enabled {
+			t.Fatalf("TOTP enabled status: enabled=%t err=%v", enabled, err)
+		}
 		var challengeHash totp.ChallengeHash
 		challengeHash[0] = 5
 		if err := adapter.TOTP().CreateChallenge(ctx, totp.Challenge{

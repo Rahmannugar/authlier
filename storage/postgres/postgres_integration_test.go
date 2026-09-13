@@ -38,6 +38,9 @@ func TestPostgresAdapter(t *testing.T) {
 	if err := adapter.Migrate(ctx); err != nil {
 		t.Fatalf("migrate: %v", err)
 	}
+	if enabled, err := adapter.TOTP().IsEnabled(ctx, "missing-user"); err != nil || enabled {
+		t.Fatalf("missing TOTP status: enabled=%t err=%v", enabled, err)
+	}
 	if err := adapter.Migrate(ctx); err != nil {
 		t.Fatalf("repeat migration: %v", err)
 	}

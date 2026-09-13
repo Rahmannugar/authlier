@@ -6,7 +6,7 @@ methods.
 
 ## PostgreSQL
 
-The `storage/postgres` package is the first complete adapter. Its migration creates the
+The `storage/postgres` package is a complete adapter. Its migration creates the
 complete Authlier schema, including tables for sign-in methods you have not yet
 enabled. Empty tables use little space, and enabling another method later does
 not require selecting another migration set.

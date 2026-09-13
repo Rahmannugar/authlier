@@ -16,6 +16,17 @@ type TOTPStore struct{ adapter *Adapter }
 
 func (adapter *Adapter) TOTP() *TOTPStore { return &TOTPStore{adapter} }
 
+func (store *TOTPStore) IsEnabled(ctx context.Context, subjectID string) (bool, error) {
+	count, err := store.adapter.collection(totpCredentialsCollection).CountDocuments(ctx, bson.M{
+		"_id": subjectID,
+		"$or": bson.A{
+			bson.M{"disabled_at": bson.M{"$exists": false}},
+			bson.M{"disabled_at": nil},
+		},
+	})
+	return count > 0, err
+}
+
 type totpEnrollmentDocument struct {
 	SubjectID string    `bson:"_id"`
 	Secret    []byte    `bson:"encrypted_secret"`

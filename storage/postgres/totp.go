@@ -14,6 +14,15 @@ type TOTPStore struct{ adapter *Adapter }
 
 func (adapter *Adapter) TOTP() *TOTPStore { return &TOTPStore{adapter: adapter} }
 
+func (store *TOTPStore) IsEnabled(ctx context.Context, subjectID string) (bool, error) {
+	var enabled bool
+	err := store.adapter.pool.QueryRow(ctx, `SELECT EXISTS (
+		SELECT 1 FROM authlier_totp_credentials
+		WHERE subject_id = $1 AND disabled_at IS NULL
+	)`, subjectID).Scan(&enabled)
+	return enabled, err
+}
+
 func (store *TOTPStore) BeginEnrollment(ctx context.Context, enrollment totp.Enrollment) error {
 	secret, err := store.encrypt(ctx, enrollment.Secret)
 	if err != nil {

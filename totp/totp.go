@@ -65,6 +65,7 @@ type Challenge struct {
 // Store encrypts TOTP secrets at rest. Enable consumes the enrollment;
 // challenge completion and replay protection are atomic.
 type Store interface {
+	IsEnabled(ctx context.Context, subjectID string) (bool, error)
 	BeginEnrollment(ctx context.Context, enrollment Enrollment) error
 	FindEnrollment(ctx context.Context, subjectID string) (Enrollment, error)
 	Enable(ctx context.Context, subjectID string, confirmedCounter uint64, recoveryCodes []RecoveryCodeHash, enabledAt time.Time) error
@@ -224,6 +225,18 @@ func (manager *Manager) BeginEnrollment(
 		URI:       key.URL(),
 		ExpiresAt: enrollment.ExpiresAt,
 	}, nil
+}
+
+func (manager *Manager) IsEnabled(ctx context.Context, subjectID string) (bool, error) {
+	subjectID = strings.TrimSpace(subjectID)
+	if subjectID == "" {
+		return false, ErrInvalidInput
+	}
+	enabled, err := manager.store.IsEnabled(ctx, subjectID)
+	if err != nil {
+		return false, fmt.Errorf("check TOTP status: %w", err)
+	}
+	return enabled, nil
 }
 
 func (manager *Manager) ConfirmEnrollment(

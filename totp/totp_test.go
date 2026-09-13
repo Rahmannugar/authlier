@@ -261,6 +261,13 @@ func newStore() *memoryStore {
 	}
 }
 
+func (store *memoryStore) IsEnabled(_ context.Context, subjectID string) (bool, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	_, exists := store.credentials[subjectID]
+	return exists, nil
+}
+
 func (store *memoryStore) BeginEnrollment(_ context.Context, enrollment totp.Enrollment) error {
 	store.mu.Lock()
 	defer store.mu.Unlock()

@@ -73,6 +73,27 @@ func TestRegistrationCreatesCredentialAndConsumesCeremony(t *testing.T) {
 	}
 }
 
+func TestRegistrationCeremonyCannotBeCompletedByAnotherSession(t *testing.T) {
+	store := newMemoryStore()
+	manager := newTestManager(
+		store,
+		&fakeProtocol{registered: credential("credential-1", 0)},
+		func() time.Time { return fixedTime },
+	)
+	started, err := manager.BeginRegistration(context.Background(), "user-1")
+	if err != nil {
+		t.Fatalf("begin registration: %v", err)
+	}
+	_, err = manager.CompleteRegistration(context.Background(), CompleteInput{
+		CeremonyToken: started.Token,
+		SubjectID:     "user-2",
+		Response:      []byte("registration-response"),
+	})
+	if !errors.Is(err, ErrInvalidCeremony) {
+		t.Fatalf("complete registration as another user: got %v, want invalid ceremony", err)
+	}
+}
+
 func TestDiscoverableAuthenticationResolvesCredentialOwner(t *testing.T) {
 	store := newMemoryStore()
 	stored := credential("credential-1", 1)

@@ -5,14 +5,15 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"slices"
 	"strings"
 	"time"
 
 	"github.com/Rahmannugar/authlier/emailpassword"
+	"github.com/Rahmannugar/authlier/emailverification"
 	"github.com/Rahmannugar/authlier/sessiontoken"
 )
 
@@ -21,6 +22,8 @@ const maximumRequestBody = 1 << 20
 type httpHandler struct {
 	auth           *Auth
 	allowedOrigins []string
+	trustedProxies []netip.Prefix
+	crossSitePOSTs map[string]struct{}
 	cookie         http.Cookie
 	mux            *http.ServeMux
 }
@@ -30,8 +33,13 @@ type credentialsRequest struct {
 	Password string `json:"password"`
 }
 
+type userDetails struct {
+	ID    string `json:"id"`
+	Email string `json:"email"`
+}
+
 type userResponse struct {
-	User emailpassword.User `json:"user"`
+	User userDetails `json:"user"`
 }
 
 type sessionResponse struct {
@@ -62,6 +70,10 @@ func newHandler(auth *Auth, config Config, baseURL *url.URL, basePath string) (h
 		}
 		origins = append(origins, origin.Scheme+"://"+origin.Host)
 	}
+	trustedProxies, err := parseTrustedProxies(config.TrustedProxies)
+	if err != nil {
+		return nil, fmt.Errorf("%w: invalid trusted proxy", ErrInvalidConfig)
+	}
 	cookie := config.Session.Cookie
 	if strings.TrimSpace(cookie.Name) == "" {
 		cookie.Name = "authlier_session"
@@ -79,6 +91,8 @@ func newHandler(auth *Auth, config Config, baseURL *url.URL, basePath string) (h
 	handler := &httpHandler{
 		auth:           auth,
 		allowedOrigins: origins,
+		trustedProxies: trustedProxies,
+		crossSitePOSTs: make(map[string]struct{}),
 		cookie: http.Cookie{
 			Name:     cookie.Name,
 			Domain:   cookie.Domain,
@@ -89,10 +103,31 @@ func newHandler(auth *Auth, config Config, baseURL *url.URL, basePath string) (h
 		},
 		mux: http.NewServeMux(),
 	}
-	handler.mux.HandleFunc("POST "+basePath+"/sign-up/email", handler.signUp)
-	handler.mux.HandleFunc("POST "+basePath+"/sign-in/email", handler.signIn)
+	if auth.password != nil {
+		handler.mux.HandleFunc("POST "+basePath+"/sign-up/email", handler.signUp)
+		handler.mux.HandleFunc("POST "+basePath+"/sign-in/email", handler.signIn)
+		registerAccountRoutes(handler, basePath)
+	}
 	handler.mux.HandleFunc("POST "+basePath+"/sign-out", handler.signOut)
 	handler.mux.HandleFunc("GET "+basePath+"/session", handler.session)
+	if auth.emailVerification != nil {
+		registerEmailVerificationRoutes(handler, basePath)
+	}
+	if auth.passwordReset != nil {
+		registerPasswordResetRoutes(handler, basePath)
+	}
+	if auth.totp != nil {
+		registerTOTPRoutes(handler, basePath)
+	}
+	if auth.passkeys != nil {
+		registerPasskeyRoutes(handler, basePath)
+	}
+	if auth.google != nil {
+		registerGoogleRoutes(handler, basePath)
+	}
+	if auth.oidc != nil || auth.saml != nil {
+		registerSSORoutes(handler, basePath)
+	}
 	return handler, nil
 }
 
@@ -113,7 +148,8 @@ func (handler *httpHandler) ServeHTTP(response http.ResponseWriter, request *htt
 		response.WriteHeader(http.StatusNoContent)
 		return
 	}
-	if request.Method != http.MethodGet && !handler.validOrigin(origin) {
+	_, crossSitePOST := handler.crossSitePOSTs[request.URL.Path]
+	if request.Method != http.MethodGet && !crossSitePOST && !handler.validOrigin(origin) {
 		writeError(response, http.StatusForbidden, "origin_not_allowed")
 		return
 	}
@@ -126,10 +162,23 @@ func (handler *httpHandler) signUp(response http.ResponseWriter, request *http.R
 		return
 	}
 	user, err := handler.auth.password.Register(request.Context(), emailpassword.RegisterInput{
-		Email: input.Email, Password: input.Password, SourceKey: sourceKey(request),
+		Email: input.Email, Password: input.Password, SourceKey: handler.sourceKey(request),
 	})
 	if err != nil {
 		writeAuthenticationError(response, err)
+		return
+	}
+	if handler.auth.emailVerification != nil &&
+		(handler.auth.sendVerificationOnSignUp || handler.auth.requireEmailVerification) {
+		if err := handler.auth.emailVerification.Request(request.Context(), emailverification.RequestInput{
+			Email: user.Email, SourceKey: handler.sourceKey(request),
+		}); err != nil {
+			writeEmailVerificationError(response, err)
+			return
+		}
+	}
+	if handler.auth.requireEmailVerification {
+		writeJSON(response, http.StatusCreated, newUserResponse(user.ID, user.Email))
 		return
 	}
 	issued, err := handler.auth.sessions.Create(request.Context(), user.ID)
@@ -138,7 +187,7 @@ func (handler *httpHandler) signUp(response http.ResponseWriter, request *http.R
 		return
 	}
 	handler.setSession(response, issued.Token, issued.Record.ExpiresAt)
-	writeJSON(response, http.StatusCreated, userResponse{User: user})
+	writeJSON(response, http.StatusCreated, newUserResponse(user.ID, user.Email))
 }
 
 func (handler *httpHandler) signIn(response http.ResponseWriter, request *http.Request) {
@@ -147,11 +196,51 @@ func (handler *httpHandler) signIn(response http.ResponseWriter, request *http.R
 		return
 	}
 	login, err := handler.auth.password.Login(request.Context(), emailpassword.LoginInput{
-		Email: input.Email, Password: input.Password, SourceKey: sourceKey(request),
+		Email: input.Email, Password: input.Password, SourceKey: handler.sourceKey(request),
 	})
 	if err != nil {
 		writeAuthenticationError(response, err)
 		return
+	}
+	if handler.auth.requireEmailVerification {
+		verified, err := handler.auth.emailVerification.IsVerified(request.Context(), login.User.Email)
+		if err != nil {
+			writeError(response, http.StatusInternalServerError, "authentication_failed")
+			return
+		}
+		if !verified {
+			if handler.auth.sendVerificationOnSignIn {
+				if err := handler.auth.emailVerification.Request(
+					request.Context(),
+					emailverification.RequestInput{Email: login.User.Email, SourceKey: handler.sourceKey(request)},
+				); err != nil {
+					writeEmailVerificationError(response, err)
+					return
+				}
+			}
+			writeError(response, http.StatusForbidden, "email_not_verified")
+			return
+		}
+	}
+	if handler.auth.totp != nil {
+		enabled, err := handler.auth.totp.IsEnabled(request.Context(), login.User.ID)
+		if err != nil {
+			writeError(response, http.StatusInternalServerError, "authentication_failed")
+			return
+		}
+		if enabled {
+			challenge, err := handler.auth.totp.BeginChallenge(request.Context(), login.User.ID)
+			if err != nil {
+				writeError(response, http.StatusInternalServerError, "authentication_failed")
+				return
+			}
+			writeJSON(response, http.StatusOK, twoFactorRequiredResponse{
+				TwoFactorRequired: true,
+				ChallengeToken:    challenge.Token,
+				ExpiresAt:         challenge.ExpiresAt,
+			})
+			return
+		}
 	}
 	issued, err := handler.auth.sessions.Create(request.Context(), login.User.ID)
 	if err != nil {
@@ -159,7 +248,7 @@ func (handler *httpHandler) signIn(response http.ResponseWriter, request *http.R
 		return
 	}
 	handler.setSession(response, issued.Token, issued.Record.ExpiresAt)
-	writeJSON(response, http.StatusOK, userResponse{User: login.User})
+	writeJSON(response, http.StatusOK, newUserResponse(login.User.ID, login.User.Email))
 }
 
 func (handler *httpHandler) signOut(response http.ResponseWriter, request *http.Request) {
@@ -171,11 +260,16 @@ func (handler *httpHandler) signOut(response http.ResponseWriter, request *http.
 			return
 		}
 	}
+	handler.clearSession(response)
+	response.WriteHeader(http.StatusNoContent)
+}
+
+func (handler *httpHandler) clearSession(response http.ResponseWriter) {
 	expired := handler.cookie
 	expired.Value = ""
 	expired.MaxAge = -1
+	expired.Expires = time.Unix(1, 0)
 	http.SetCookie(response, &expired)
-	response.WriteHeader(http.StatusNoContent)
 }
 
 func (handler *httpHandler) session(response http.ResponseWriter, request *http.Request) {
@@ -198,31 +292,147 @@ func (handler *httpHandler) setSession(response http.ResponseWriter, token strin
 	http.SetCookie(response, &cookie)
 }
 
+func newSessionDetails(record sessiontoken.Record) sessionDetails {
+	return sessionDetails{
+		SubjectID: record.SubjectID,
+		CreatedAt: record.CreatedAt,
+		ExpiresAt: record.ExpiresAt,
+	}
+}
+
+func (handler *httpHandler) completeProviderAuthentication(
+	response http.ResponseWriter,
+	request *http.Request,
+	subjectID string,
+	redirectURL string,
+) {
+	issued, err := handler.auth.sessions.Create(request.Context(), subjectID)
+	if err != nil {
+		writeError(response, http.StatusInternalServerError, "session_failed")
+		return
+	}
+	handler.setSession(response, issued.Token, issued.Record.ExpiresAt)
+	if redirectURL != "" {
+		http.Redirect(response, request, redirectURL, http.StatusSeeOther)
+		return
+	}
+	writeJSON(response, http.StatusOK, sessionResponse{Session: newSessionDetails(issued.Record)})
+}
+
+func (handler *httpHandler) createAuthenticatedSession(
+	response http.ResponseWriter,
+	request *http.Request,
+	subjectID string,
+) {
+	issued, err := handler.auth.sessions.Create(request.Context(), subjectID)
+	if err != nil {
+		writeError(response, http.StatusInternalServerError, "session_failed")
+		return
+	}
+	handler.setSession(response, issued.Token, issued.Record.ExpiresAt)
+	writeJSON(response, http.StatusOK, sessionResponse{Session: newSessionDetails(issued.Record)})
+}
+
+func (handler *httpHandler) requireSession(
+	response http.ResponseWriter,
+	request *http.Request,
+	fresh bool,
+) (sessiontoken.Record, bool) {
+	record, err := handler.auth.ResolveSession(request)
+	if err != nil {
+		writeError(response, http.StatusUnauthorized, "not_authenticated")
+		return sessiontoken.Record{}, false
+	}
+	if fresh && time.Now().UTC().After(record.CreatedAt.Add(handler.auth.sessionFreshAge)) {
+		writeError(response, http.StatusForbidden, "recent_authentication_required")
+		return sessiontoken.Record{}, false
+	}
+	return record, true
+}
+
 func (handler *httpHandler) validOrigin(origin string) bool {
 	return origin != "" && slices.Contains(handler.allowedOrigins, origin)
 }
 
 func readCredentials(response http.ResponseWriter, request *http.Request) (credentialsRequest, bool) {
 	var input credentialsRequest
-	decoder := json.NewDecoder(http.MaxBytesReader(response, request.Body, maximumRequestBody))
-	decoder.DisallowUnknownFields()
-	if err := decoder.Decode(&input); err != nil {
-		writeError(response, http.StatusBadRequest, "invalid_request")
-		return input, false
-	}
-	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
-		writeError(response, http.StatusBadRequest, "invalid_request")
+	if !readJSON(response, request, &input) {
 		return input, false
 	}
 	return input, true
 }
 
-func sourceKey(request *http.Request) string {
-	host, _, err := net.SplitHostPort(request.RemoteAddr)
-	if err == nil {
-		return host
+func readJSON(response http.ResponseWriter, request *http.Request, destination interface{}) bool {
+	decoder := json.NewDecoder(http.MaxBytesReader(response, request.Body, maximumRequestBody))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(destination); err != nil {
+		writeError(response, http.StatusBadRequest, "invalid_request")
+		return false
 	}
-	return request.RemoteAddr
+	if err := decoder.Decode(&struct{}{}); !errors.Is(err, io.EOF) {
+		writeError(response, http.StatusBadRequest, "invalid_request")
+		return false
+	}
+	return true
+}
+
+func parseTrustedProxies(values []string) ([]netip.Prefix, error) {
+	prefixes := make([]netip.Prefix, 0, len(values))
+	for _, value := range values {
+		value = strings.TrimSpace(value)
+		prefix, err := netip.ParsePrefix(value)
+		if err != nil {
+			address, addressErr := netip.ParseAddr(value)
+			if addressErr != nil {
+				return nil, err
+			}
+			prefix = netip.PrefixFrom(address, address.BitLen())
+		}
+		prefixes = append(prefixes, prefix.Masked())
+	}
+	return prefixes, nil
+}
+
+func (handler *httpHandler) sourceKey(request *http.Request) string {
+	peer, ok := remoteAddress(request.RemoteAddr)
+	if !ok {
+		return request.RemoteAddr
+	}
+	peer = peer.Unmap()
+	if !handler.trustedProxy(peer) {
+		return peer.String()
+	}
+
+	forwarded := strings.Split(request.Header.Get("X-Forwarded-For"), ",")
+	candidate := peer
+	for index := len(forwarded) - 1; index >= 0; index-- {
+		address, err := netip.ParseAddr(strings.TrimSpace(forwarded[index]))
+		if err != nil {
+			return peer.String()
+		}
+		candidate = address.Unmap()
+		if !handler.trustedProxy(candidate) {
+			return candidate.String()
+		}
+	}
+	return candidate.String()
+}
+
+func remoteAddress(value string) (netip.Addr, bool) {
+	if addressPort, err := netip.ParseAddrPort(value); err == nil {
+		return addressPort.Addr(), true
+	}
+	address, err := netip.ParseAddr(value)
+	return address, err == nil
+}
+
+func (handler *httpHandler) trustedProxy(address netip.Addr) bool {
+	for _, prefix := range handler.trustedProxies {
+		if prefix.Contains(address) {
+			return true
+		}
+	}
+	return false
 }
 
 func writeAuthenticationError(response http.ResponseWriter, err error) {
@@ -255,4 +465,8 @@ func writeJSON(response http.ResponseWriter, status int, value interface{}) {
 	response.Header().Set("Content-Type", "application/json")
 	response.WriteHeader(status)
 	_ = json.NewEncoder(response).Encode(value)
+}
+
+func newUserResponse(id, email string) userResponse {
+	return userResponse{User: userDetails{ID: id, Email: email}}
 }

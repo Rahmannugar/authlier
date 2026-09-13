@@ -14,6 +14,15 @@ type TOTPStore struct{ adapter *Adapter }
 
 func (adapter *Adapter) TOTP() *TOTPStore { return &TOTPStore{adapter} }
 
+func (store *TOTPStore) IsEnabled(ctx context.Context, subjectID string) (bool, error) {
+	var credential storedTOTPCredential
+	err := readJSON(ctx, store.adapter.client, store.adapter.key("totp-credentials"), subjectID, &credential)
+	if errors.Is(err, redislibrary.Nil) {
+		return false, nil
+	}
+	return credential.DisabledAt == nil, err
+}
+
 type storedEnrollment struct {
 	SubjectID string
 	Secret    []byte

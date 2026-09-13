@@ -158,6 +158,7 @@ type AuthenticationStarted struct {
 
 type CompleteInput struct {
 	CeremonyToken string
+	SubjectID     string
 	Response      []byte
 	SourceKey     string
 }
@@ -245,6 +246,9 @@ func (manager *Manager) CompleteRegistration(
 	ceremony, ceremonyHash, err := manager.findCeremony(ctx, input.CeremonyToken, CeremonyRegistration)
 	if err != nil {
 		return Credential{}, err
+	}
+	if input.SubjectID != "" && ceremony.SubjectID != input.SubjectID {
+		return Credential{}, ErrInvalidCeremony
 	}
 	if err := manager.checkAttempt(ctx, OperationRegister, ceremony.SubjectID, input.SourceKey); err != nil {
 		return Credential{}, err

@@ -23,6 +23,11 @@ type EmailPasswordStore interface {
 	emailpassword.CredentialStore
 }
 
+type GoogleStore interface {
+	googleoauth.Store
+	googleoauth.IdentityStore
+}
+
 type AccessSession struct {
 	ID        string
 	SubjectID string
@@ -40,7 +45,7 @@ type AccessSessionStore interface {
 type Stores struct {
 	EmailPassword     EmailPasswordStore
 	EmailVerification emailverification.Store
-	Google            googleoauth.Store
+	Google            GoogleStore
 	OIDC              oidc.Store
 	Passkeys          passkey.Store
 	PasswordReset     passwordreset.Store
