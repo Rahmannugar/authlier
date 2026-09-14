@@ -13,7 +13,7 @@ jobs:
     name: Test, vet, and build
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
@@ -34,7 +34,7 @@ jobs:
       run:
         working-directory: website
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: 1.4.0
@@ -76,7 +76,7 @@ jobs:
     env:
       AUTHLIER_POSTGRES_TEST_DSN: postgres://authlier_test:authlier_test@localhost:5432/authlier_test?sslmode=disable
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
@@ -107,7 +107,7 @@ jobs:
     env:
       AUTHLIER_MYSQL_TEST_DSN: authlier_test:authlier_test@tcp(127.0.0.1:3306)/authlier_test?parseTime=true&loc=UTC
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
@@ -124,7 +124,7 @@ jobs:
     env:
       AUTHLIER_MONGODB_TEST_URI: mongodb://localhost:27017/?replicaSet=rs0&directConnection=true
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
@@ -158,7 +158,7 @@ jobs:
     env:
       AUTHLIER_REDIS_TEST_ADDRESS: localhost:6379
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod

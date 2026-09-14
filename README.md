@@ -46,8 +46,7 @@ if err != nil {
 	return err
 }
 
-mux := http.NewServeMux()
-mux.Handle("/api/auth/", auth.Handler())
+http.Handle("/api/auth/", auth.Handler())
 ```
 
 The complete [Getting started](website/content/docs/getting-started.md) guide
