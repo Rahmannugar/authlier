@@ -15,8 +15,10 @@ continues to recognize both formats for staged migration.
 
 ## Installation
 
+The current release is `v0.2.0`.
+
 ```bash
-go get github.com/Rahmannugar/authlier
+go get github.com/Rahmannugar/authlier@v0.2.0
 ```
 
 ## How it works
