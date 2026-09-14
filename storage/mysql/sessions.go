@@ -214,11 +214,29 @@ func scanSession(row rowScanner) (sessiontoken.Record, error) {
 	return record, nil
 }
 
-func (store *AccessSessionStore) Create(ctx context.Context, session authlier.AccessSession) error {
-	_, err := store.adapter.database.ExecContext(ctx, `INSERT INTO authlier_access_sessions
+func (store *AccessSessionStore) CreateSession(
+	ctx context.Context,
+	session authlier.AccessSession,
+	refreshToken refreshtoken.Record,
+) error {
+	tx, err := store.adapter.database.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `INSERT INTO authlier_access_sessions
 		(id, subject_id, created_at, expires_at, revoked_at) VALUES (?, ?, ?, ?, ?)`,
-		session.ID, session.SubjectID, session.CreatedAt, session.ExpiresAt, session.RevokedAt)
-	return err
+		session.ID, session.SubjectID, session.CreatedAt, session.ExpiresAt, session.RevokedAt); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO authlier_refresh_tokens
+		(token_hash, session_id, created_at, expires_at, rotated_at, revoked_at)
+		VALUES (?, ?, ?, ?, ?, ?)`, refreshToken.TokenHash[:], refreshToken.SessionID,
+		refreshToken.CreatedAt, refreshToken.ExpiresAt, refreshToken.RotatedAt,
+		refreshToken.RevokedAt); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (store *AccessSessionStore) ResolveSession(
@@ -226,10 +244,34 @@ func (store *AccessSessionStore) ResolveSession(
 	sessionID string,
 ) (accesstoken.Session, error) {
 	var session accesstoken.Session
-	err := store.adapter.database.QueryRowContext(ctx, `SELECT id, subject_id FROM authlier_access_sessions
+	err := store.adapter.database.QueryRowContext(ctx, `SELECT id, subject_id, created_at, expires_at FROM authlier_access_sessions
 		WHERE id = ? AND revoked_at IS NULL AND expires_at > CURRENT_TIMESTAMP`, sessionID,
-	).Scan(&session.ID, &session.SubjectID)
+	).Scan(&session.ID, &session.SubjectID, &session.CreatedAt, &session.ExpiresAt)
 	return session, err
+}
+
+func (store *AccessSessionStore) ListBySubject(
+	ctx context.Context,
+	subjectID string,
+) ([]authlier.AccessSession, error) {
+	rows, err := store.adapter.database.QueryContext(ctx, `SELECT id, subject_id, created_at,
+		expires_at, revoked_at FROM authlier_access_sessions WHERE subject_id = ?
+		ORDER BY created_at DESC`, subjectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	records := make([]authlier.AccessSession, 0)
+	for rows.Next() {
+		var record authlier.AccessSession
+		if err := rows.Scan(
+			&record.ID, &record.SubjectID, &record.CreatedAt, &record.ExpiresAt, &record.RevokedAt,
+		); err != nil {
+			return nil, err
+		}
+		records = append(records, record)
+	}
+	return records, rows.Err()
 }
 
 func (store *AccessSessionStore) Revoke(
@@ -237,9 +279,38 @@ func (store *AccessSessionStore) Revoke(
 	sessionID string,
 	revokedAt time.Time,
 ) error {
-	_, err := store.adapter.database.ExecContext(ctx, `UPDATE authlier_access_sessions
-		SET revoked_at = COALESCE(revoked_at, ?) WHERE id = ?`, revokedAt, sessionID)
-	return err
+	tx, err := store.adapter.database.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if err := revokeAccessSession(ctx, tx, sessionID, revokedAt); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+func (store *AccessSessionStore) RevokeAll(
+	ctx context.Context,
+	subjectID string,
+	revokedAt time.Time,
+) error {
+	tx, err := store.adapter.database.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `UPDATE authlier_refresh_tokens
+		SET revoked_at = COALESCE(revoked_at, ?)
+		WHERE session_id IN (SELECT id FROM authlier_access_sessions WHERE subject_id = ?)`,
+		revokedAt, subjectID); err != nil {
+		return err
+	}
+	if _, err := tx.ExecContext(ctx, `UPDATE authlier_access_sessions
+		SET revoked_at = COALESCE(revoked_at, ?) WHERE subject_id = ?`, revokedAt, subjectID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func (store *RefreshTokenStore) Create(ctx context.Context, record refreshtoken.Record) error {
@@ -346,4 +417,4 @@ func revokeAccessSession(ctx context.Context, tx *sql.Tx, sessionID string, revo
 
 var _ sessiontoken.Store = (*SessionStore)(nil)
 var _ refreshtoken.Store = (*RefreshTokenStore)(nil)
-var _ accesstoken.SessionResolver = (*AccessSessionStore)(nil)
+var _ authlier.AccessSessionStore = (*AccessSessionStore)(nil)

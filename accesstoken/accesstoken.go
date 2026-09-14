@@ -72,6 +72,19 @@ func NewIssuer(config IssuerConfig) (*Issuer, error) {
 
 // Issue signs a JWT for an existing durable session.
 func (issuer *Issuer) Issue(subjectID, sessionID string) (Issued, error) {
+	return issuer.issue(subjectID, sessionID, time.Time{})
+}
+
+// IssueUntil signs an access token without allowing it to outlive maximumExpiry.
+func (issuer *Issuer) IssueUntil(
+	subjectID string,
+	sessionID string,
+	maximumExpiry time.Time,
+) (Issued, error) {
+	return issuer.issue(subjectID, sessionID, maximumExpiry)
+}
+
+func (issuer *Issuer) issue(subjectID, sessionID string, maximumExpiry time.Time) (Issued, error) {
 	if strings.TrimSpace(subjectID) == "" || strings.TrimSpace(sessionID) == "" {
 		return Issued{}, ErrInvalidToken
 	}
@@ -81,6 +94,12 @@ func (issuer *Issuer) Issue(subjectID, sessionID string) (Issued, error) {
 	}
 	now := issuer.now().UTC().Truncate(time.Second)
 	expiresAt := now.Add(issuer.lifetime)
+	if !maximumExpiry.IsZero() && expiresAt.After(maximumExpiry) {
+		expiresAt = maximumExpiry.UTC().Truncate(time.Second)
+	}
+	if !expiresAt.After(now) {
+		return Issued{}, ErrInactiveSession
+	}
 	claims := Claims{
 		SessionID: sessionID,
 		RegisteredClaims: jwtlib.RegisteredClaims{
@@ -105,6 +124,12 @@ func (issuer *Issuer) Issue(subjectID, sessionID string) (Issued, error) {
 type Session struct {
 	ID        string
 	SubjectID string
+	CreatedAt time.Time
+	ExpiresAt time.Time
+}
+
+func (session Session) ActiveAt(at time.Time) bool {
+	return at.Before(session.ExpiresAt)
 }
 
 // SessionResolver resolves an active durable session.
@@ -157,8 +182,17 @@ func NewVerifier(resolver SessionResolver, config VerifierConfig) (*Verifier, er
 
 // Verify validates the JWT and its durable session.
 func (verifier *Verifier) Verify(ctx context.Context, rawToken string) (Claims, error) {
+	claims, _, err := verifier.VerifySession(ctx, rawToken)
+	return claims, err
+}
+
+// VerifySession validates the token and returns its durable session.
+func (verifier *Verifier) VerifySession(
+	ctx context.Context,
+	rawToken string,
+) (Claims, Session, error) {
 	if len(rawToken) == 0 || len(rawToken) > maximumTokenLength {
-		return Claims{}, ErrInvalidToken
+		return Claims{}, Session{}, ErrInvalidToken
 	}
 	claims := Claims{}
 	parsed, err := jwtlib.ParseWithClaims(
@@ -189,12 +223,13 @@ func (verifier *Verifier) Verify(ctx context.Context, rawToken string) (Claims, 
 	if err != nil || !parsed.Valid || strings.TrimSpace(claims.Subject) == "" ||
 		strings.TrimSpace(claims.SessionID) == "" || strings.TrimSpace(claims.ID) == "" ||
 		claims.IssuedAt == nil || claims.NotBefore == nil {
-		return Claims{}, ErrInvalidToken
+		return Claims{}, Session{}, ErrInvalidToken
 	}
 
 	activeSession, err := verifier.resolver.ResolveSession(ctx, claims.SessionID)
-	if err != nil || activeSession.ID != claims.SessionID || activeSession.SubjectID != claims.Subject {
-		return Claims{}, ErrInactiveSession
+	if err != nil || activeSession.ID != claims.SessionID || activeSession.SubjectID != claims.Subject ||
+		!activeSession.ActiveAt(verifier.now().UTC()) {
+		return Claims{}, Session{}, ErrInactiveSession
 	}
-	return claims, nil
+	return claims, activeSession, nil
 }

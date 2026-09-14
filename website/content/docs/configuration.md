@@ -10,7 +10,7 @@ Create one `authlier.Config` when the application starts. `AppName`, `BaseURL`,
 ```go
 auth, err := authlier.New(authlier.Config{
 	AppName:  "Acme",
-	BaseURL:  "https://app.example.com",
+	BaseURL:  "https://server.example.com",
 	Database: database,
 	EmailAndPassword: authlier.EmailAndPasswordConfig{
 		Enabled: true,
@@ -27,20 +27,20 @@ Authlier does not force its routes to live at `/api/auth`. Choose the route
 prefix with `BasePath`, then mount `auth.Handler()` at that same path in your Go
 server.
 
-The default is `/api/auth`. It works well when the frontend and Go server share
-one public domain:
+The default is `/api/auth`. For a server at `server.example.com`, email sign-in
+is available at:
 
 ```text
-https://app.example.com/api/auth/sign-in/email
+https://server.example.com/api/auth/sign-in/email
 ```
 
-When the Go server already has a dedicated API domain, you may prefer `/auth`
-so that `api` is not repeated in the URL:
+If that server already uses an `api` subdomain, you may prefer `/auth` so the
+URL does not repeat `api`:
 
 ```go
 auth, err := authlier.New(authlier.Config{
 	AppName:  "Acme",
-	BaseURL:  "https://api.example.com",
+	BaseURL:  "https://server.example.com",
 	BasePath: "/auth",
 	Database: database,
 	EmailAndPassword: authlier.EmailAndPasswordConfig{
@@ -51,8 +51,8 @@ auth, err := authlier.New(authlier.Config{
 http.Handle("/auth/", auth.Handler())
 ```
 
-The routes now begin with `https://api.example.com/auth`. For example, email
-sign-in is available at `https://api.example.com/auth/sign-in/email`.
+The routes now begin with `https://server.example.com/auth`. `BasePath` changes
+the Authlier route prefix; it does not change your server's domain.
 
 `BasePath` must start with `/` and must not end with `/`. The path passed to
 `http.Handle` ends with `/` because Go uses that trailing slash to match every
@@ -62,17 +62,24 @@ router.
 
 ## Browser origins
 
-Authlier accepts browser requests from `BaseURL`. Add another frontend origin
-only when the application needs one:
+Authlier accepts browser requests from `BaseURL`. If the browser client is
+served from another origin, add that client origin:
 
 ```go
 TrustedOrigins: []string{
-	"https://admin.example.com",
+	"https://client.example.com",
 },
 ```
 
-POST requests without an allowed `Origin` header are rejected. This protects
-cookie-authenticated routes from cross-site requests.
+For browser requests, the browser creates the `Origin` header automatically.
+Your frontend does not set `Access-Control-Allow-Origin`; Authlier adds that
+response header after it recognizes the origin. Cookie mode rejects POST
+requests whose origin is missing or untrusted, which protects the session
+cookie from cross-site requests.
+
+Native clients do not send browser origin headers. Bearer mode therefore accepts
+a request without `Origin`, but still rejects an untrusted origin when a browser
+does send one. See [Bearer tokens](/docs/bearer-tokens).
 
 ## Sessions
 
@@ -89,7 +96,8 @@ Session: authlier.SessionConfig{
 },
 ```
 
-See [Sessions](sessions.md) before enabling session extension or a Redis cache.
+See [Sessions](/docs/sessions) before enabling session extension or a Redis
+cache.
 
 ## Optional authentication methods
 

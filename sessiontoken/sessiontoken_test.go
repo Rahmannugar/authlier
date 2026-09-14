@@ -286,7 +286,7 @@ func TestSessionExtensionIsOptInAndBounded(t *testing.T) {
 	manager, err := sessiontoken.NewManager(store, nil, sessiontoken.Config{
 		Lifetime: 24 * time.Hour,
 		Extension: &sessiontoken.ExtensionConfig{
-			After:            time.Hour,
+			ExtendAfter:      time.Hour,
 			AbsoluteLifetime: 72 * time.Hour,
 		},
 		Now: func() time.Time { return now },

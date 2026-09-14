@@ -18,6 +18,7 @@ import (
 	"github.com/Rahmannugar/authlier/emailverification"
 	"github.com/Rahmannugar/authlier/oidc"
 	"github.com/Rahmannugar/authlier/passkey"
+	"github.com/Rahmannugar/authlier/refreshtoken"
 	"github.com/Rahmannugar/authlier/saml"
 	"github.com/Rahmannugar/authlier/sessiontoken"
 	authliermysql "github.com/Rahmannugar/authlier/storage/mysql"
@@ -142,6 +143,41 @@ func TestMySQLAdapter(t *testing.T) {
 		revoked, err := adapter.Sessions().RevokeAll(ctx, record.SubjectID, now.Add(2*time.Minute))
 		if err != nil || len(revoked) != 1 || revoked[0].RevokedAt == nil {
 			t.Fatalf("revoke all: records=%#v err=%v", revoked, err)
+		}
+	})
+
+	t.Run("bearer sessions create and revoke access and refresh records together", func(t *testing.T) {
+		now := time.Now().UTC().Truncate(time.Microsecond)
+		session := authlier.AccessSession{
+			ID: uuid.Must(uuid.NewV7()).String(), SubjectID: "bearer-user",
+			CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+		}
+		var hash refreshtoken.TokenHash
+		hash[0] = 9
+		refresh := refreshtoken.Record{
+			SessionID: session.ID, TokenHash: hash,
+			CreatedAt: now, ExpiresAt: session.ExpiresAt,
+		}
+		if err := adapter.AccessSessions().CreateSession(ctx, session, refresh); err != nil {
+			t.Fatalf("create bearer session: %v", err)
+		}
+		active, err := adapter.AccessSessions().ResolveSession(ctx, session.ID)
+		if err != nil || active.SubjectID != session.SubjectID {
+			t.Fatalf("resolve access session: session=%+v err=%v", active, err)
+		}
+		listed, err := adapter.AccessSessions().ListBySubject(ctx, session.SubjectID)
+		if err != nil || len(listed) != 1 || listed[0].ID != session.ID {
+			t.Fatalf("list access sessions: sessions=%+v err=%v", listed, err)
+		}
+		if err := adapter.AccessSessions().RevokeAll(ctx, session.SubjectID, now.Add(time.Minute)); err != nil {
+			t.Fatalf("revoke bearer sessions: %v", err)
+		}
+		if _, err := adapter.AccessSessions().ResolveSession(ctx, session.ID); err == nil {
+			t.Fatal("revoked access session still resolves")
+		}
+		revokedRefresh, err := adapter.RefreshTokens().FindByTokenHash(ctx, hash)
+		if err != nil || revokedRefresh.RevokedAt == nil {
+			t.Fatalf("revoked refresh token: record=%+v err=%v", revokedRefresh, err)
 		}
 	})
 

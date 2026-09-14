@@ -14,6 +14,7 @@ import {
   PackageIcon,
   RocketLaunchIcon,
   ShieldCheckIcon,
+  TreeStructureIcon,
   UserCircleIcon,
 } from '@phosphor-icons/react/dist/ssr';
 import { loader } from 'fumadocs-core/source';
@@ -36,6 +37,7 @@ const icons = {
   Package: PackageIcon,
   Rocket: RocketLaunchIcon,
   Shield: ShieldCheckIcon,
+  Structure: TreeStructureIcon,
   User: UserCircleIcon,
 };
 

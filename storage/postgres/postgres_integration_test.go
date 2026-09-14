@@ -15,6 +15,7 @@ import (
 	"github.com/Rahmannugar/authlier"
 	"github.com/Rahmannugar/authlier/emailpassword"
 	"github.com/Rahmannugar/authlier/oidc"
+	"github.com/Rahmannugar/authlier/refreshtoken"
 	"github.com/Rahmannugar/authlier/sessiontoken"
 	"github.com/Rahmannugar/authlier/storage/postgres"
 	"github.com/google/uuid"
@@ -123,6 +124,41 @@ func TestPostgresAdapter(t *testing.T) {
 		found, err := adapter.Sessions().FindByTokenHash(ctx, hash)
 		if err != nil || found.ID != record.ID {
 			t.Fatalf("find session: record=%+v err=%v", found, err)
+		}
+	})
+
+	t.Run("bearer sessions create and revoke access and refresh records together", func(t *testing.T) {
+		now := time.Now().UTC().Truncate(time.Microsecond)
+		session := authlier.AccessSession{
+			ID: uuid.Must(uuid.NewV7()).String(), SubjectID: "bearer-user",
+			CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+		}
+		var hash refreshtoken.TokenHash
+		hash[0] = 9
+		refresh := refreshtoken.Record{
+			SessionID: session.ID, TokenHash: hash,
+			CreatedAt: now, ExpiresAt: session.ExpiresAt,
+		}
+		if err := adapter.AccessSessions().CreateSession(ctx, session, refresh); err != nil {
+			t.Fatalf("create bearer session: %v", err)
+		}
+		active, err := adapter.AccessSessions().ResolveSession(ctx, session.ID)
+		if err != nil || active.SubjectID != session.SubjectID {
+			t.Fatalf("resolve access session: session=%+v err=%v", active, err)
+		}
+		listed, err := adapter.AccessSessions().ListBySubject(ctx, session.SubjectID)
+		if err != nil || len(listed) != 1 || listed[0].ID != session.ID {
+			t.Fatalf("list access sessions: sessions=%+v err=%v", listed, err)
+		}
+		if err := adapter.AccessSessions().RevokeAll(ctx, session.SubjectID, now.Add(time.Minute)); err != nil {
+			t.Fatalf("revoke bearer sessions: %v", err)
+		}
+		if _, err := adapter.AccessSessions().ResolveSession(ctx, session.ID); err == nil {
+			t.Fatal("revoked access session still resolves")
+		}
+		revokedRefresh, err := adapter.RefreshTokens().FindByTokenHash(ctx, hash)
+		if err != nil || revokedRefresh.RevokedAt == nil {
+			t.Fatalf("revoked refresh token: record=%+v err=%v", revokedRefresh, err)
 		}
 	})
 

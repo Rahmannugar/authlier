@@ -18,12 +18,12 @@ permissions.
 
 <AuthFlow />
 
-The browser client sends authentication requests to your Go server. The
-Authlier handler verifies them, writes the necessary records through your
-storage adapter, and returns an HttpOnly session cookie. On later application
-requests, your Go server resolves that session. Authlier returns the subject ID;
-your application uses it to load its own user data and enforce its own roles and
-permissions.
+The client sends authentication requests to the Authlier handler mounted in
+your Go server. Authlier verifies the request, stores the authentication
+records, and creates a session. Browser applications normally receive an
+HttpOnly cookie. Mobile, CLI, and API clients can use access and refresh tokens
+instead. Your server resolves the session to a stable subject ID, which your
+application uses to load its own data and enforce its own permissions.
 
 ## Included authentication methods
 
@@ -36,5 +36,6 @@ permissions.
 | Passkeys | WebAuthn registration and passwordless sign-in |
 | OIDC and SAML | Single sign-on with organization identity providers |
 
-Start with [Getting started](getting-started.md) for a complete working Go
-server. Then use [Basic usage](basic-usage.md) to connect a browser interface.
+Start with [Getting started](/docs/getting-started) for a complete working Go
+server. Then use [Basic usage](/docs/basic-usage) for a browser client or
+[Bearer tokens](/docs/bearer-tokens) for a mobile, CLI, or API client.

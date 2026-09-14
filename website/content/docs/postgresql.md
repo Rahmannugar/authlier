@@ -27,6 +27,18 @@ if err != nil {
 if err := database.Migrate(ctx); err != nil {
 	return err
 }
+
+auth, err := authlier.New(authlier.Config{
+	AppName:  "Acme",
+	BaseURL:  "https://server.example.com",
+	Database: database,
+	EmailAndPassword: authlier.EmailAndPasswordConfig{
+		Enabled: true,
+	},
+})
+if err != nil {
+	return err
+}
 ```
 
 `Migrate` creates a small migration ledger and the complete Authlier schema.
@@ -34,7 +46,7 @@ The schema includes empty tables for disabled authentication methods so enabling
 a method later does not require choosing another migration set. Already applied
 migrations are skipped.
 
-PostgreSQL 17 and 18 are covered by Authlier's CI integration tests.
+Supported versions: PostgreSQL 17 and 18.
 
 When TOTP is enabled, provide a `postgres.SecretCodec` through
 `postgres.Config.Secrets` so authenticator secrets are encrypted before they

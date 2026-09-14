@@ -2,6 +2,7 @@ package authlier
 
 import (
 	"context"
+	"crypto/ed25519"
 	"net/http"
 	"time"
 
@@ -14,6 +15,13 @@ import (
 	"github.com/Rahmannugar/authlier/saml"
 	"github.com/Rahmannugar/authlier/sessiontoken"
 	"github.com/Rahmannugar/authlier/totp"
+)
+
+type SessionMode string
+
+const (
+	SessionModeCookie SessionMode = "cookie"
+	SessionModeBearer SessionMode = "bearer"
 )
 
 type EmailAndPasswordConfig struct {
@@ -54,12 +62,25 @@ type CookieConfig struct {
 }
 
 type SessionConfig struct {
+	Mode      SessionMode
 	Lifetime  time.Duration
 	FreshAge  time.Duration
 	Cache     sessiontoken.Cache
 	CacheTTL  time.Duration
 	Extension *sessiontoken.ExtensionConfig
 	Cookie    CookieConfig
+	Bearer    BearerSessionConfig
+}
+
+type BearerSessionConfig struct {
+	Issuer               string
+	Audience             string
+	AccessTokenLifetime  time.Duration
+	RefreshTokenLifetime time.Duration
+	KeyID                string
+	PrivateKey           ed25519.PrivateKey
+	PublicKeys           map[string]ed25519.PublicKey
+	Leeway               time.Duration
 }
 
 type TOTPConfig struct {

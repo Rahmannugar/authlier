@@ -35,8 +35,8 @@ EmailVerification: authlier.EmailVerificationConfig{
 
 The default verification URL is
 `{BaseURL}/api/auth/verify-email?token=...`. Set `VerificationURL` when a
-frontend page should receive the token instead. That page must submit the token
-to Authlier's verification route.
+page in your browser client should receive the token instead. That page must
+submit the token to Authlier's verification route.
 
 ## Routes
 

@@ -4,8 +4,9 @@ description: Connect an Authlier identity to profiles, roles, and permissions ow
 icon: User
 ---
 
-Authlier answers one question: who authenticated? Your application answers what
-that person can see or change.
+Authlier verifies the sign-in method and gives the authenticated account a
+stable subject ID. Your application uses that ID to decide which data, roles,
+and permissions belong to the account.
 
 Every Authlier user has a stable ID. A resolved session exposes it as
 `SubjectID`:

@@ -23,6 +23,18 @@ if err != nil {
 if err := database.Migrate(ctx); err != nil {
 	return err
 }
+
+auth, err := authlier.New(authlier.Config{
+	AppName:  "Acme",
+	BaseURL:  "https://server.example.com",
+	Database: database,
+	EmailAndPassword: authlier.EmailAndPasswordConfig{
+		Enabled: true,
+	},
+})
+if err != nil {
+	return err
+}
 ```
 
 `Migrate` verifies the Redis connection. The adapter uses a shared hash tag in
@@ -52,5 +64,5 @@ The database remains authoritative. A cache miss or cache error falls back to
 the database, while revocation updates the database before removing cached
 state.
 
-Redis 7.4 and 8 are covered by Authlier's CI integration tests. Supply a
-`redis.SecretCodec` when using Redis as the primary database with TOTP.
+Supported versions: Redis 7.4 and 8. Supply a `redis.SecretCodec` when using
+Redis as the primary database with TOTP.

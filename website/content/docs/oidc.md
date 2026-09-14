@@ -7,7 +7,7 @@ icon: Buildings
 Register this callback URL with the identity provider:
 
 ```text
-https://app.example.com/api/auth/sso/oidc/callback
+https://server.example.com/api/auth/sso/oidc/callback
 ```
 
 Each connection supplies its own issuer, client credentials, callback URL, and
@@ -37,7 +37,7 @@ connections := oidcConnections{connections: map[string]oidc.Connection{
 		Issuer:               "https://idp.example.com",
 		ClientID:             os.Getenv("ACME_OIDC_CLIENT_ID"),
 		ClientSecret:         os.Getenv("ACME_OIDC_CLIENT_SECRET"),
-		RedirectURL:          "https://app.example.com/api/auth/sso/oidc/callback",
+		RedirectURL:          "https://server.example.com/api/auth/sso/oidc/callback",
 		Scopes:               []string{"openid", "profile", "email"},
 		RequireVerifiedEmail: true,
 	},
@@ -57,13 +57,13 @@ OIDC: authlier.OIDCConfig{
 			identity.ProviderSubject,
 		)
 	},
-	SuccessRedirectURL: "/account",
+	SuccessRedirectURL: "https://client.example.com/account",
 },
 ```
 
 ## Start sign-in
 
-```js
+```ts
 const response = await fetch('/api/auth/sso/oidc/sign-in', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
@@ -76,3 +76,7 @@ window.location.assign(url);
 
 Authlier discovers the provider, uses state, nonce, and S256 PKCE, validates the
 ID token, calls the resolver, and creates a session.
+
+`SuccessRedirectURL` is the browser-client page opened after Authlier creates
+the cookie session. OIDC is available only in cookie mode in this release; see
+[Bearer tokens](/docs/bearer-tokens#browser-provider-flows).

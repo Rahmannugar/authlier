@@ -89,6 +89,25 @@ func (manager *Manager) Create(ctx context.Context, sessionID string) (Issued, e
 	return manager.create(ctx, sessionID)
 }
 
+// Resolve validates a refresh token without consuming it.
+func (manager *Manager) Resolve(ctx context.Context, rawToken string) (Record, error) {
+	tokenHash, err := token.HashToken(rawToken)
+	if err != nil {
+		return Record{}, err
+	}
+	record, err := manager.store.FindByTokenHash(ctx, tokenHash)
+	if err != nil {
+		return Record{}, fmt.Errorf("find refresh token: %w", err)
+	}
+	if err := validRecord(record); err != nil || record.TokenHash != tokenHash {
+		return Record{}, ErrInvalidRecord
+	}
+	if !record.ActiveAt(manager.now().UTC()) {
+		return Record{}, ErrInactive
+	}
+	return record, nil
+}
+
 // Rotate consumes a token once and returns its replacement.
 func (manager *Manager) Rotate(ctx context.Context, rawToken string) (Issued, error) {
 	currentHash, err := token.HashToken(rawToken)
@@ -121,18 +140,19 @@ func (manager *Manager) Rotate(ctx context.Context, rawToken string) (Issued, er
 
 // RevokeSession revokes the session associated with rawToken.
 func (manager *Manager) RevokeSession(ctx context.Context, rawToken string) error {
-	tokenHash, err := token.HashToken(rawToken)
+	record, err := manager.Resolve(ctx, rawToken)
 	if err != nil {
 		return err
 	}
-	record, err := manager.store.FindByTokenHash(ctx, tokenHash)
-	if err != nil {
-		return fmt.Errorf("find refresh token session: %w", err)
-	}
-	if err := validRecord(record); err != nil || record.TokenHash != tokenHash {
+	return manager.RevokeSessionID(ctx, record.SessionID)
+}
+
+// RevokeSessionID revokes a durable access session and all of its refresh tokens.
+func (manager *Manager) RevokeSessionID(ctx context.Context, sessionID string) error {
+	if strings.TrimSpace(sessionID) == "" {
 		return ErrInvalidRecord
 	}
-	if err := manager.store.RevokeSession(ctx, record.SessionID, manager.now().UTC()); err != nil {
+	if err := manager.store.RevokeSession(ctx, sessionID, manager.now().UTC()); err != nil {
 		return fmt.Errorf("revoke session refresh tokens: %w", err)
 	}
 	return nil

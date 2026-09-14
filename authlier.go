@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/Rahmannugar/authlier/accesstoken"
 	"github.com/Rahmannugar/authlier/emailpassword"
 	"github.com/Rahmannugar/authlier/emailverification"
 	"github.com/Rahmannugar/authlier/googleoauth"
@@ -22,15 +23,17 @@ import (
 var ErrInvalidConfig = errors.New("invalid Authlier configuration")
 
 const (
-	defaultSessionLifetime     = 7 * 24 * time.Hour
-	defaultFreshAge            = 15 * time.Minute
-	defaultEmailTokenLifetime  = time.Hour
-	defaultTOTPEnrollment      = 10 * time.Minute
-	defaultTOTPChallenge       = 5 * time.Minute
-	defaultTOTPRecoveryCodes   = 10
-	defaultPasskeyCeremony     = 5 * time.Minute
-	defaultProviderState       = 10 * time.Minute
-	defaultSAMLRequestLifetime = 5 * time.Minute
+	defaultSessionLifetime      = 7 * 24 * time.Hour
+	defaultFreshAge             = 15 * time.Minute
+	defaultAccessTokenLifetime  = 15 * time.Minute
+	defaultRefreshTokenLifetime = 30 * 24 * time.Hour
+	defaultEmailTokenLifetime   = time.Hour
+	defaultTOTPEnrollment       = 10 * time.Minute
+	defaultTOTPChallenge        = 5 * time.Minute
+	defaultTOTPRecoveryCodes    = 10
+	defaultPasskeyCeremony      = 5 * time.Minute
+	defaultProviderState        = 10 * time.Minute
+	defaultSAMLRequestLifetime  = 5 * time.Minute
 )
 
 type Auth struct {
@@ -43,6 +46,8 @@ type Auth struct {
 	oidc                          *oidc.Manager
 	saml                          *saml.Manager
 	sessions                      *sessiontoken.Manager
+	bearerSessions                *bearerSessionManager
+	sessionMode                   SessionMode
 	totp                          *totp.Manager
 	sessionFreshAge               time.Duration
 	requireEmailVerification      bool
@@ -88,10 +93,17 @@ func New(config Config) (*Auth, error) {
 	if config.Session.FreshAge <= 0 {
 		return nil, fmt.Errorf("%w: session fresh age must be positive", ErrInvalidConfig)
 	}
-	stores := config.Database.Stores()
-	if stores.Sessions == nil {
-		return nil, fmt.Errorf("%w: database does not provide session storage", ErrInvalidConfig)
+	if config.Session.Mode != SessionModeCookie && config.Session.Mode != SessionModeBearer {
+		return nil, fmt.Errorf("%w: session mode must be cookie or bearer", ErrInvalidConfig)
 	}
+	if config.Session.Mode == SessionModeBearer &&
+		(config.Google.Enabled || config.OIDC.Enabled || config.SAML.Enabled) {
+		return nil, fmt.Errorf(
+			"%w: Google, OIDC, and SAML require cookie sessions",
+			ErrInvalidConfig,
+		)
+	}
+	stores := config.Database.Stores()
 	var passwords *emailpassword.Manager
 	if config.EmailAndPassword.Enabled {
 		if stores.EmailPassword == nil {
@@ -107,23 +119,52 @@ func New(config Config) (*Auth, error) {
 			return nil, err
 		}
 	}
-	sessions, err := sessiontoken.NewManager(stores.Sessions, config.Session.Cache, sessiontoken.Config{
-		Lifetime:  config.Session.Lifetime,
-		CacheTTL:  config.Session.CacheTTL,
-		Extension: config.Session.Extension,
-	})
-	if err != nil {
-		return nil, err
-	}
 	auth := &Auth{
 		password:                      passwords,
-		sessions:                      sessions,
+		sessionMode:                   config.Session.Mode,
 		sessionFreshAge:               config.Session.FreshAge,
 		requireEmailVerification:      config.EmailAndPassword.RequireEmailVerification,
 		sendVerificationOnSignUp:      config.EmailVerification.SendOnSignUp,
 		sendVerificationOnSignIn:      config.EmailVerification.SendOnSignIn,
 		autoSignInAfterVerification:   config.EmailVerification.AutoSignInAfterVerification,
 		revokeSessionsOnPasswordReset: !config.PasswordReset.KeepSessionsAfterReset,
+	}
+	if config.Session.Mode == SessionModeCookie {
+		if stores.Sessions == nil {
+			return nil, fmt.Errorf("%w: database does not provide cookie session storage", ErrInvalidConfig)
+		}
+		auth.sessions, err = sessiontoken.NewManager(
+			stores.Sessions,
+			config.Session.Cache,
+			sessiontoken.Config{
+				Lifetime: config.Session.Lifetime, CacheTTL: config.Session.CacheTTL,
+				Extension: config.Session.Extension,
+			},
+		)
+		if err != nil {
+			return nil, err
+		}
+	} else {
+		if stores.AccessSessions == nil || stores.RefreshTokens == nil {
+			return nil, fmt.Errorf("%w: database does not provide bearer session storage", ErrInvalidConfig)
+		}
+		if config.Session.Cache != nil || config.Session.Extension != nil {
+			return nil, fmt.Errorf(
+				"%w: cache and extension apply only to cookie sessions",
+				ErrInvalidConfig,
+			)
+		}
+		if strings.TrimSpace(config.Session.Bearer.Issuer) == "" {
+			config.Session.Bearer.Issuer = baseURL.Scheme + "://" + baseURL.Host
+		}
+		auth.bearerSessions, err = newBearerSessionManager(
+			stores.AccessSessions,
+			stores.RefreshTokens,
+			config.Session.Bearer,
+		)
+		if err != nil {
+			return nil, err
+		}
 	}
 	if config.TOTP.Enabled {
 		if stores.TOTP == nil {
@@ -311,11 +352,20 @@ func New(config Config) (*Auth, error) {
 }
 
 func applyConfigDefaults(config *Config) {
+	if config.Session.Mode == "" {
+		config.Session.Mode = SessionModeCookie
+	}
 	if config.Session.Lifetime == 0 {
 		config.Session.Lifetime = defaultSessionLifetime
 	}
 	if config.Session.FreshAge == 0 {
 		config.Session.FreshAge = defaultFreshAge
+	}
+	if config.Session.Bearer.AccessTokenLifetime == 0 {
+		config.Session.Bearer.AccessTokenLifetime = defaultAccessTokenLifetime
+	}
+	if config.Session.Bearer.RefreshTokenLifetime == 0 {
+		config.Session.Bearer.RefreshTokenLifetime = defaultRefreshTokenLifetime
 	}
 	if config.EmailVerification.Lifetime == 0 {
 		config.EmailVerification.Lifetime = defaultEmailTokenLifetime
@@ -348,12 +398,34 @@ func applyConfigDefaults(config *Config) {
 
 func (auth *Auth) Handler() http.Handler { return auth.handler }
 
-func (auth *Auth) ResolveSession(r *http.Request) (sessiontoken.Record, error) {
+func (auth *Auth) ResolveSession(r *http.Request) (Session, error) {
+	if auth.sessionMode == SessionModeBearer {
+		token, err := bearerToken(r.Header.Get("Authorization"))
+		if err != nil {
+			return Session{}, err
+		}
+		return auth.bearerSessions.Resolve(r.Context(), token)
+	}
 	cookie, err := r.Cookie(auth.cookieName)
 	if err != nil {
-		return sessiontoken.Record{}, sessiontoken.ErrInvalidToken
+		return Session{}, sessiontoken.ErrInvalidToken
 	}
-	return auth.sessions.Resolve(r.Context(), cookie.Value)
+	record, err := auth.sessions.Resolve(r.Context(), cookie.Value)
+	if err != nil {
+		return Session{}, err
+	}
+	return Session{
+		ID: record.ID, SubjectID: record.SubjectID,
+		CreatedAt: record.CreatedAt, ExpiresAt: record.ExpiresAt,
+	}, nil
+}
+
+func bearerToken(authorization string) (string, error) {
+	parts := strings.Fields(authorization)
+	if len(parts) != 2 || !strings.EqualFold(parts[0], "Bearer") || parts[1] == "" {
+		return "", accesstoken.ErrInvalidToken
+	}
+	return parts[1], nil
 }
 
 func parseSuccessRedirectURL(rawURL string) (string, error) {

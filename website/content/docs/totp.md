@@ -13,7 +13,7 @@ TOTP: authlier.TOTPConfig{
 ```
 
 The storage adapter needs a secret codec because TOTP secrets must be encrypted
-at rest. Configure that codec on the selected [storage adapter](storage.md).
+at rest. Configure that codec on the selected [storage adapter](/docs/storage).
 
 ## Enroll an authenticator
 

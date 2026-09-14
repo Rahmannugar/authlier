@@ -119,8 +119,9 @@ curl --include \
   http://localhost:8080/api/auth/sign-up/email
 ```
 
-The response contains the user and sets an HttpOnly session cookie. Send that
-cookie to an authenticated route:
+`curl` is not a browser, so the command includes `Origin` explicitly. A browser
+adds that header automatically. The response contains the user and sets an
+HttpOnly session cookie. Send that cookie to an authenticated route:
 
 ```bash
 curl --cookie cookies.txt http://localhost:8080/account
@@ -144,7 +145,8 @@ The handler also provides:
 - `GET /api/auth/list-sessions`
 - session revocation routes
 
-Only enabled features add their routes. Continue with [Basic usage](basic-usage.md)
-to call these routes from a browser, [Configuration](configuration.md) to
-change the route prefix and other defaults, or [Storage](storage.md) to choose
-another database.
+Only enabled features add their routes. Continue with
+[Basic usage](/docs/basic-usage) to call these routes from a browser client,
+[Configuration](/docs/configuration) to change the route prefix and other
+defaults, [Bearer tokens](/docs/bearer-tokens) for mobile or CLI clients, or
+[Storage](/docs/storage) to choose another database.

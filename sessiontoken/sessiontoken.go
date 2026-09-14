@@ -73,7 +73,7 @@ type Cache interface {
 }
 
 type ExtensionConfig struct {
-	After            time.Duration
+	ExtendAfter      time.Duration
 	AbsoluteLifetime time.Duration
 }
 
@@ -103,8 +103,8 @@ func NewManager(store Store, cache Cache, config Config) (*Manager, error) {
 	if cache != nil && config.CacheTTL <= 0 {
 		return nil, fmt.Errorf("%w: cache TTL must be positive when cache is configured", ErrInvalidConfig)
 	}
-	if config.Extension != nil && (config.Extension.After <= 0 ||
-		config.Extension.After >= config.Lifetime ||
+	if config.Extension != nil && (config.Extension.ExtendAfter <= 0 ||
+		config.Extension.ExtendAfter >= config.Lifetime ||
 		config.Extension.AbsoluteLifetime <= config.Lifetime) {
 		return nil, fmt.Errorf("%w: invalid extension settings", ErrInvalidConfig)
 	}
@@ -368,7 +368,7 @@ func (manager *Manager) extendIfDue(ctx context.Context, record Record, now time
 	if record.ExtendedAt != nil {
 		lastExtendedAt = *record.ExtendedAt
 	}
-	if now.Before(lastExtendedAt.Add(manager.extension.After)) {
+	if now.Before(lastExtendedAt.Add(manager.extension.ExtendAfter)) {
 		return record, nil
 	}
 

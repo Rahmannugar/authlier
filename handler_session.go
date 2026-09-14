@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/Rahmannugar/authlier/refreshtoken"
 	"github.com/Rahmannugar/authlier/sessiontoken"
 )
 
@@ -33,17 +34,13 @@ func (handler *httpHandler) listSessions(response http.ResponseWriter, request *
 	if !ok {
 		return
 	}
-	records, err := handler.auth.sessions.List(request.Context(), current.SubjectID)
+	records, err := handler.listActiveSessions(request, current.SubjectID)
 	if err != nil {
 		writeSessionError(response, err)
 		return
 	}
-	now := time.Now().UTC()
 	sessions := make([]listedSessionDetails, 0, len(records))
 	for _, record := range records {
-		if !record.ActiveAt(now) {
-			continue
-		}
 		sessions = append(sessions, listedSessionDetails{
 			sessionDetails: newSessionDetails(record),
 			Current:        record.ID == current.ID,
@@ -61,9 +58,17 @@ func (handler *httpHandler) revokeSession(response http.ResponseWriter, request 
 	if !readJSON(response, request, &input) {
 		return
 	}
-	if err := handler.auth.sessions.RevokeByID(
-		request.Context(), current.SubjectID, input.SessionID,
-	); err != nil {
+	var err error
+	if handler.sessionMode == SessionModeBearer {
+		err = handler.auth.bearerSessions.RevokeByID(
+			request.Context(), current.SubjectID, input.SessionID,
+		)
+	} else {
+		err = handler.auth.sessions.RevokeByID(
+			request.Context(), current.SubjectID, input.SessionID,
+		)
+	}
+	if err != nil {
 		writeSessionError(response, err)
 		return
 	}
@@ -78,7 +83,7 @@ func (handler *httpHandler) revokeOtherSessions(response http.ResponseWriter, re
 	if !ok {
 		return
 	}
-	if err := handler.auth.sessions.RevokeAll(request.Context(), current.SubjectID); err != nil {
+	if err := handler.revokeAllSessions(request, current.SubjectID); err != nil {
 		writeSessionError(response, err)
 		return
 	}
@@ -91,7 +96,7 @@ func (handler *httpHandler) revokeSessions(response http.ResponseWriter, request
 	if !ok {
 		return
 	}
-	if err := handler.auth.sessions.RevokeAll(request.Context(), current.SubjectID); err != nil {
+	if err := handler.revokeAllSessions(request, current.SubjectID); err != nil {
 		writeSessionError(response, err)
 		return
 	}
@@ -100,9 +105,43 @@ func (handler *httpHandler) revokeSessions(response http.ResponseWriter, request
 }
 
 func writeSessionError(response http.ResponseWriter, err error) {
-	if errors.Is(err, sessiontoken.ErrNotFound) {
+	if errors.Is(err, sessiontoken.ErrNotFound) || errors.Is(err, refreshtoken.ErrNotFound) {
 		writeError(response, http.StatusNotFound, "session_not_found")
 		return
 	}
 	writeError(response, http.StatusInternalServerError, "session_update_failed")
+}
+
+func (handler *httpHandler) listActiveSessions(
+	request *http.Request,
+	subjectID string,
+) ([]Session, error) {
+	if handler.sessionMode == SessionModeBearer {
+		return handler.auth.bearerSessions.List(request.Context(), subjectID)
+	}
+	records, err := handler.auth.sessions.List(request.Context(), subjectID)
+	if err != nil {
+		return nil, err
+	}
+	now := time.Now().UTC()
+	sessions := make([]Session, 0, len(records))
+	for _, record := range records {
+		if record.ActiveAt(now) {
+			sessions = append(sessions, Session{
+				ID: record.ID, SubjectID: record.SubjectID,
+				CreatedAt: record.CreatedAt, ExpiresAt: record.ExpiresAt,
+			})
+		}
+	}
+	return sessions, nil
+}
+
+func (handler *httpHandler) revokeAllSessions(
+	request *http.Request,
+	subjectID string,
+) error {
+	if handler.sessionMode == SessionModeBearer {
+		return handler.auth.bearerSessions.RevokeAll(request.Context(), subjectID)
+	}
+	return handler.auth.sessions.RevokeAll(request.Context(), subjectID)
 }

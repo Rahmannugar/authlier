@@ -225,14 +225,39 @@ func decodeRedisValue(value any, destination any) error {
 	}
 }
 
-func (store *AccessSessionStore) Create(ctx context.Context, session authlier.AccessSession) error {
-	key := store.adapter.key("access-sessions")
-	encoded, _ := encodeJSON(session)
-	created, err := store.adapter.client.HSetNX(ctx, key, session.ID, encoded).Result()
-	if err == nil && !created {
-		return ErrTransactionConflict
-	}
-	return err
+func (store *AccessSessionStore) CreateSession(
+	ctx context.Context,
+	session authlier.AccessSession,
+	refreshToken refreshtoken.Record,
+) error {
+	access := store.adapter.key("access-sessions")
+	refresh := store.adapter.key("refresh-tokens")
+	subject := store.adapter.key("access:subject:" + session.SubjectID)
+	bySession := store.adapter.key("refresh:session:" + session.ID)
+	refreshField := hashKey(refreshToken.TokenHash[:])
+	return store.adapter.watch(ctx, []string{access, refresh, subject, bySession}, func(tx *redislibrary.Tx) error {
+		accessExists, err := tx.HExists(ctx, access, session.ID).Result()
+		if err != nil {
+			return err
+		}
+		refreshExists, err := tx.HExists(ctx, refresh, refreshField).Result()
+		if err != nil {
+			return err
+		}
+		if accessExists || refreshExists {
+			return ErrTransactionConflict
+		}
+		encodedSession, _ := encodeJSON(session)
+		encodedRefresh, _ := encodeJSON(refreshToken)
+		_, err = tx.TxPipelined(ctx, func(pipe redislibrary.Pipeliner) error {
+			pipe.HSet(ctx, access, session.ID, encodedSession)
+			pipe.HSet(ctx, refresh, refreshField, encodedRefresh)
+			pipe.SAdd(ctx, subject, session.ID)
+			pipe.SAdd(ctx, bySession, refreshField)
+			return nil
+		})
+		return err
+	})
 }
 
 func (store *AccessSessionStore) ResolveSession(ctx context.Context, sessionID string) (accesstoken.Session, error) {
@@ -247,25 +272,115 @@ func (store *AccessSessionStore) ResolveSession(ctx context.Context, sessionID s
 		}
 		return accesstoken.Session{}, err
 	}
-	return accesstoken.Session{ID: session.ID, SubjectID: session.SubjectID}, nil
+	return accesstoken.Session{
+		ID: session.ID, SubjectID: session.SubjectID,
+		CreatedAt: session.CreatedAt, ExpiresAt: session.ExpiresAt,
+	}, nil
+}
+
+func (store *AccessSessionStore) ListBySubject(
+	ctx context.Context,
+	subjectID string,
+) ([]authlier.AccessSession, error) {
+	ids, err := store.adapter.client.SMembers(
+		ctx,
+		store.adapter.key("access:subject:"+subjectID),
+	).Result()
+	if err != nil || len(ids) == 0 {
+		return []authlier.AccessSession{}, err
+	}
+	values, err := store.adapter.client.HMGet(
+		ctx,
+		store.adapter.key("access-sessions"),
+		ids...,
+	).Result()
+	if err != nil {
+		return nil, err
+	}
+	records := make([]authlier.AccessSession, 0, len(values))
+	for _, value := range values {
+		if value == nil {
+			continue
+		}
+		var record authlier.AccessSession
+		if err := decodeRedisValue(value, &record); err != nil {
+			return nil, err
+		}
+		records = append(records, record)
+	}
+	slices.SortFunc(records, func(left, right authlier.AccessSession) int {
+		return right.CreatedAt.Compare(left.CreatedAt)
+	})
+	return records, nil
 }
 
 func (store *AccessSessionStore) Revoke(ctx context.Context, sessionID string, revokedAt time.Time) error {
-	key := store.adapter.key("access-sessions")
-	return store.adapter.watch(ctx, []string{key}, func(tx *redislibrary.Tx) error {
-		var session authlier.AccessSession
-		if err := readJSON(ctx, tx, key, sessionID, &session); errors.Is(err, redislibrary.Nil) {
-			return nil
-		} else if err != nil {
+	refresh, access := store.adapter.key("refresh-tokens"), store.adapter.key("access-sessions")
+	set := store.adapter.key("refresh:session:" + sessionID)
+	return store.adapter.watch(ctx, []string{refresh, access, set}, func(tx *redislibrary.Tx) error {
+		return store.adapter.RefreshTokens().revokeSessionInTransaction(
+			ctx, tx, sessionID, revokedAt,
+		)
+	})
+}
+
+func (store *AccessSessionStore) RevokeAll(
+	ctx context.Context,
+	subjectID string,
+	revokedAt time.Time,
+) error {
+	access := store.adapter.key("access-sessions")
+	refresh := store.adapter.key("refresh-tokens")
+	subject := store.adapter.key("access:subject:" + subjectID)
+	return store.adapter.watch(ctx, []string{access, refresh, subject}, func(tx *redislibrary.Tx) error {
+		ids, err := tx.SMembers(ctx, subject).Result()
+		if err != nil {
 			return err
 		}
-		if session.RevokedAt != nil {
-			return nil
+		accessUpdates := make(map[string]any, len(ids)*2)
+		refreshUpdates := make(map[string]any)
+		for _, sessionID := range ids {
+			var session authlier.AccessSession
+			if err := readJSON(ctx, tx, access, sessionID, &session); err != nil {
+				if errors.Is(err, redislibrary.Nil) {
+					continue
+				}
+				return err
+			}
+			if session.RevokedAt == nil {
+				session.RevokedAt = &revokedAt
+				encoded, _ := encodeJSON(session)
+				accessUpdates[sessionID] = encoded
+			}
+			fields, err := tx.SMembers(
+				ctx,
+				store.adapter.key("refresh:session:"+sessionID),
+			).Result()
+			if err != nil {
+				return err
+			}
+			for _, field := range fields {
+				var record refreshtoken.Record
+				if err := readJSON(ctx, tx, refresh, field, &record); err != nil {
+					if errors.Is(err, redislibrary.Nil) {
+						continue
+					}
+					return err
+				}
+				if record.RevokedAt == nil {
+					record.RevokedAt = &revokedAt
+					encoded, _ := encodeJSON(record)
+					refreshUpdates[field] = encoded
+				}
+			}
 		}
-		session.RevokedAt = &revokedAt
-		encoded, _ := encodeJSON(session)
-		_, err := tx.TxPipelined(ctx, func(pipe redislibrary.Pipeliner) error {
-			pipe.HSet(ctx, key, sessionID, encoded)
+		_, err = tx.TxPipelined(ctx, func(pipe redislibrary.Pipeliner) error {
+			if len(accessUpdates) > 0 {
+				pipe.HSet(ctx, access, accessUpdates)
+			}
+			if len(refreshUpdates) > 0 {
+				pipe.HSet(ctx, refresh, refreshUpdates)
+			}
 			return nil
 		})
 		return err

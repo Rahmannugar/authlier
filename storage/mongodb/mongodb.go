@@ -88,6 +88,7 @@ func (adapter *Adapter) Migrate(ctx context.Context) error {
 			{Keys: bson.D{{Key: "session_id", Value: 1}}, Options: options.Index().SetUnique(true).SetSparse(true)},
 			{Keys: bson.D{{Key: "subject_id", Value: 1}, {Key: "created_at", Value: -1}}},
 		},
+		"authlier_access_sessions":     {{Keys: bson.D{{Key: "subject_id", Value: 1}, {Key: "created_at", Value: -1}}}},
 		"authlier_refresh_tokens":      {{Keys: bson.D{{Key: "session_id", Value: 1}}}},
 		"authlier_totp_recovery_codes": {{Keys: bson.D{{Key: "subject_id", Value: 1}, {Key: "code_hash", Value: 1}}, Options: options.Index().SetUnique(true)}},
 		"authlier_passkey_credentials": {{Keys: bson.D{{Key: "subject_id", Value: 1}}}},

@@ -55,12 +55,14 @@ func (handler *httpHandler) verifyEmail(response http.ResponseWriter, request *h
 		return
 	}
 	if handler.auth.autoSignInAfterVerification {
-		issued, err := handler.auth.sessions.Create(request.Context(), user.ID)
-		if err != nil {
-			writeError(response, http.StatusInternalServerError, "session_failed")
+		session, tokens, ok := handler.issueSession(response, request, user.ID)
+		if !ok {
 			return
 		}
-		handler.setSession(response, issued.Token, issued.Record.ExpiresAt)
+		writeJSON(response, http.StatusOK, userResponse{
+			User: userDetails{ID: user.ID, Email: user.Email}, Session: &session, Tokens: tokens,
+		})
+		return
 	}
 	writeJSON(response, http.StatusOK, newUserResponse(user.ID, user.Email))
 }
@@ -92,7 +94,7 @@ func (handler *httpHandler) resetPassword(response http.ResponseWriter, request 
 		return
 	}
 	if handler.auth.revokeSessionsOnPasswordReset {
-		if err := handler.auth.sessions.RevokeAll(request.Context(), user.ID); err != nil {
+		if err := handler.revokeAllSessions(request, user.ID); err != nil {
 			writeError(response, http.StatusInternalServerError, "session_revocation_failed")
 			return
 		}

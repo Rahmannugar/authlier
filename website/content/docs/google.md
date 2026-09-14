@@ -8,7 +8,7 @@ Create an OAuth 2.0 web application in Google Cloud. Add this authorized
 redirect URI:
 
 ```text
-https://app.example.com/api/auth/callback/google
+https://server.example.com/api/auth/callback/google
 ```
 
 Use your application's public origin and Authlier base path.
@@ -20,24 +20,28 @@ Google: authlier.GoogleConfig{
 	Enabled:            true,
 	ClientID:           os.Getenv("GOOGLE_CLIENT_ID"),
 	ClientSecret:       os.Getenv("GOOGLE_CLIENT_SECRET"),
-	SuccessRedirectURL: "/account",
+	SuccessRedirectURL: "https://client.example.com/account",
 },
 ```
 
-`SuccessRedirectURL` must be a local application path. Authlier uses the
-default callback URL derived from `BaseURL`; set `RedirectURL` only when the
-provider is configured with another callback.
+`SuccessRedirectURL` is the browser-client page Authlier opens after creating
+the cookie session. Authlier derives the provider callback from `BaseURL`; set
+`RedirectURL` only when Google is configured with another callback.
 
 ## Start sign-in
 
-```js
+```ts
 const response = await fetch('/api/auth/sign-in/google', { method: 'POST' });
 const { url } = await response.json();
 window.location.assign(url);
 ```
 
 Google redirects to Authlier. Authlier validates state, nonce, PKCE, and the
-returned identity, creates the session, then redirects to `/account`.
+returned identity, creates the session, then redirects to the configured client
+page.
+
+Google authentication is available only in cookie mode in this release; see
+[Bearer tokens](/docs/bearer-tokens#browser-provider-flows).
 
 Google accounts are identified by Google's stable `sub` value, not by email.
 Changing the Google account's email address does not break the link.

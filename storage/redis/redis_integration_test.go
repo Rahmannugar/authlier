@@ -152,15 +152,12 @@ func TestRedisAdapter(t *testing.T) {
 	t.Run("refresh-token reuse revokes the access session", func(t *testing.T) {
 		now := time.Now().UTC()
 		access := authlier.AccessSession{ID: "access-session", SubjectID: "refresh-user", CreatedAt: now, ExpiresAt: now.Add(time.Hour)}
-		if err := adapter.AccessSessions().Create(ctx, access); err != nil {
-			t.Fatalf("create access session: %v", err)
-		}
 		var currentHash, replacementHash refreshtoken.TokenHash
 		currentHash[0], replacementHash[0] = 4, 5
 		current := refreshtoken.Record{SessionID: access.ID, TokenHash: currentHash, CreatedAt: now, ExpiresAt: now.Add(time.Hour)}
 		replacement := refreshtoken.Record{SessionID: access.ID, TokenHash: replacementHash, CreatedAt: now, ExpiresAt: now.Add(time.Hour)}
-		if err := adapter.RefreshTokens().Create(ctx, current); err != nil {
-			t.Fatalf("create refresh token: %v", err)
+		if err := adapter.AccessSessions().CreateSession(ctx, access, current); err != nil {
+			t.Fatalf("create token session: %v", err)
 		}
 		if err := adapter.RefreshTokens().Rotate(ctx, currentHash, replacement, now.Add(time.Minute)); err != nil {
 			t.Fatalf("rotate refresh token: %v", err)

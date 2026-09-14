@@ -38,8 +38,10 @@ type AccessSession struct {
 
 type AccessSessionStore interface {
 	accesstoken.SessionResolver
-	Create(ctx context.Context, session AccessSession) error
+	CreateSession(ctx context.Context, session AccessSession, refreshToken refreshtoken.Record) error
+	ListBySubject(ctx context.Context, subjectID string) ([]AccessSession, error)
 	Revoke(ctx context.Context, sessionID string, revokedAt time.Time) error
+	RevokeAll(ctx context.Context, subjectID string, revokedAt time.Time) error
 }
 
 type Stores struct {

@@ -22,8 +22,9 @@ including:
 - session creation only after every required authentication step succeeds;
 - recent authentication before sensitive credential changes;
 - secure cookie handling when opaque browser sessions are used;
+- protected refresh-token storage and rotation when bearer sessions are used;
 - stable error translation that does not expose internal failures.
 
 Use lower-level packages because the application needs a different boundary,
 not merely to rename Authlier's routes. The standard handler is easier to keep
-correct for ordinary browser applications.
+correct when a browser client communicates with a Go server over HTTP.

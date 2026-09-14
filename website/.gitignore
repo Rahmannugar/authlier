@@ -4,3 +4,4 @@
 *.tsbuildinfo
 .vercel
 next-env.d.ts
+DESIGN.md

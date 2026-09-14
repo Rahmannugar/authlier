@@ -17,8 +17,8 @@ multifactor-authentication guidance informs the corresponding Authlier flows.
 This is not a claim that OWASP has certified Authlier or that the library has
 completed every ASVS requirement. Applications must still assess the controls
 required by their own environment and threat model. See
-[Standards and dependencies](references.md) for the specific references and Go
-libraries used by Authlier.
+[Standards and dependencies](/docs/references) for the specific references and
+Go libraries used by Authlier.
 
 ## Use HTTPS
 
@@ -32,6 +32,15 @@ Keep provider client secrets, signing keys, database credentials, and TOTP
 encryption keys outside source control. Do not log passwords, raw session
 tokens, recovery codes, verification tokens, reset tokens, OAuth codes, or SAML
 responses.
+
+In bearer mode, keep the Ed25519 private key in server secret storage and use a
+distinct `KeyID` when rotating it. Native clients should keep refresh tokens in
+the operating system's protected credential storage. Do not put refresh tokens
+in browser local storage, URLs, logs, analytics, or crash reports.
+
+Bearer access tokens are short-lived, but Authlier also checks their durable
+session on every request. Preserve that check by using `ResolveSession` rather
+than trusting decoded JWT claims on their own.
 
 ## Add abuse protection
 

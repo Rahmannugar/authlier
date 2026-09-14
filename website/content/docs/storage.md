@@ -10,10 +10,10 @@ methods.
 
 Choose the database your application already operates:
 
-- [PostgreSQL](postgresql.md)
-- [MySQL](mysql.md)
-- [MongoDB](mongodb.md)
-- [Redis](redis.md), either as the primary database or as a session cache
+- [PostgreSQL](/docs/postgresql)
+- [MySQL](/docs/mysql)
+- [MongoDB](/docs/mongodb)
+- [Redis](/docs/redis), either as the primary database or as a session cache
 
 ## PostgreSQL
 
@@ -48,7 +48,7 @@ operations that change several documents use MongoDB transactions.
 
 ## Supported versions
 
-CI runs each completed adapter against two database versions:
+The official adapters support:
 
 - PostgreSQL 17 and 18.
 - Redis 7.4 and 8.
@@ -67,5 +67,5 @@ rather than raw values.
 Applications can support another database by implementing `authlier.Database`
 and the stores returned by `authlier.Stores`. Operations documented as atomic
 must remain atomic. For example, two requests must not consume the same reset
-token successfully. See [Custom storage](custom-storage.md) before implementing
+token successfully. See [Custom storage](/docs/custom-storage) before implementing
 an adapter.

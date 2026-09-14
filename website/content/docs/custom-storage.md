@@ -14,9 +14,11 @@ type Database interface {
 }
 ```
 
-`Stores` contains one interface for each authentication capability. Sessions
-are always required. A store for another capability may be `nil` while that
-capability is disabled.
+`Stores` is the set of concrete persistence implementations exposed by your
+adapter. Each field corresponds to an Authlier capability, such as
+`EmailPassword`, `Passkeys`, or `TOTP`. Cookie mode requires `Sessions`.
+Bearer mode requires both `AccessSessions` and `RefreshTokens`. A field may be
+`nil` only while the corresponding capability is disabled.
 
 Implement the behavior described by each package interface, not only matching
 method signatures. In particular, the adapter must preserve:
@@ -25,7 +27,8 @@ method signatures. In particular, the adapter must preserve:
 - atomic creation and consumption of one-time tokens and protocol state;
 - safe concurrent passkey counter updates;
 - session rotation, expiry, and account-wide revocation;
-- refresh-token reuse detection when the lower-level token packages are used.
+- atomic creation and revocation of bearer access sessions and refresh tokens;
+- refresh-token rotation and reuse detection.
 
 Test those behaviors against the real database. An in-memory mock cannot prove
 the transaction, uniqueness, or concurrency guarantees of a storage engine.

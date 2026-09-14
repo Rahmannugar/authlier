@@ -47,7 +47,7 @@ func (handler *httpHandler) changePassword(response http.ResponseWriter, request
 		return
 	}
 	if input.RevokeOtherSessions {
-		if err := handler.auth.sessions.RevokeAll(request.Context(), session.SubjectID); err != nil {
+		if err := handler.revokeAllSessions(request, session.SubjectID); err != nil {
 			writeError(response, http.StatusInternalServerError, "session_revocation_failed")
 			return
 		}

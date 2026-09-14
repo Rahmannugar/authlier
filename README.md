@@ -1,10 +1,13 @@
 # Authlier
 
-Authlier is a framework-neutral authentication library for Go applications.
+Authlier is a composable authentication library for Go applications. It brings
+passwords, sessions, email verification and recovery, MFA, passkeys, Google
+authentication, OIDC, and SAML into your Go server through one configurable
+HTTP handler.
 
-Configure Authlier once and mount its standard HTTP handler. Your application
-still owns authorization rules and can replace the standard routes with the
-lower-level packages when needed.
+Authlier verifies identities and manages authentication records. Your
+application keeps control of profiles, roles, permissions, and other product
+data.
 
 ## Installation
 
@@ -12,98 +15,64 @@ lower-level packages when needed.
 go get github.com/Rahmannugar/authlier
 ```
 
-## Architecture
+## How it works
 
-Authlier keeps each authentication capability in its own package. The root
-package connects enabled capabilities to storage and exposes the HTTP handler.
-See [`ARCHITECTURE.md`](ARCHITECTURE.md) for the package boundaries.
+1. Connect one of the official PostgreSQL, MySQL, MongoDB, or Redis adapters.
+2. Enable the authentication methods your application needs.
+3. Mount `auth.Handler()` in your Go server.
+4. Call `auth.ResolveSession(request)` from application routes that require an
+   authenticated user.
 
-## Getting started
-
-Create a supported database adapter, pass it to `authlier.New`, and mount
-`auth.Handler()`. Official adapters are available for PostgreSQL, MySQL,
-MongoDB, and Redis. Redis can also be used only as a session cache. See
-[`website/content/docs/getting-started.md`](website/content/docs/getting-started.md)
-for a working setup and
-[`website/content/docs/storage.md`](website/content/docs/storage.md) for adapter
-details.
-
-## Email and password authentication
-
-The `emailpassword` package handles registration, login, password changes, and
-old password-hash upgrades. It can also add or remove a password when an
-account uses another sign-in method. The host application provides storage,
-password rules, abuse checks, and security-event delivery.
-
-## Email verification and password recovery
-
-The `emailverification` and `passwordreset` packages send expiring, one-time
-tokens through application-provided mail senders. Authlier stores only token
-hashes. Request handlers must return the same public response whether the email
-exists or not.
-
-## Passwords
-
-The `password` package supports Argon2id by default and bcrypt for compatibility.
+With a connected `pgxpool.Pool`, a PostgreSQL setup looks like this:
 
 ```go
-encodedHash, err := password.Hash(plainPassword)
+database, err := postgres.New(pool, postgres.Config{})
+if err != nil {
+	return err
+}
+if err := database.Migrate(ctx); err != nil {
+	return err
+}
+
+auth, err := authlier.New(authlier.Config{
+	AppName:  "Acme",
+	BaseURL:  "https://server.example.com",
+	Database: database,
+	EmailAndPassword: authlier.EmailAndPasswordConfig{
+		Enabled: true,
+	},
+})
 if err != nil {
 	return err
 }
 
-verification, err := password.Verify(plainPassword, encodedHash)
-if err != nil {
-	return err
-}
-if !verification.Matches {
-	return errors.New("invalid credentials")
-}
+mux := http.NewServeMux()
+mux.Handle("/api/auth/", auth.Handler())
 ```
 
-Applications remain responsible for password policy. Passwords and password
-hashes must never be logged.
+The complete [Getting started](website/content/docs/getting-started.md) guide
+builds a working server and explains each part of this setup.
 
-## Google authentication
+## Documentation
 
-The `googleoauth` package handles the server-side Authorization Code flow with
-state, nonce, and S256 PKCE. Google accounts are linked by Google's stable
-account ID (`sub`), not by email, so changing a Google email address does not
-break sign-in. A user must sign in before linking Google to an existing local
-account. Google can be unlinked only when another sign-in method remains.
-
-## Organization SSO
-
-The `oidc` package handles provider discovery, state, nonce, PKCE, and ID-token
-verification. The `saml` package handles signed service-provider requests and
-validated Web SSO responses. Both return a provider identity; the application
-decides whether that identity belongs to an organization.
-
-## Authenticator-app MFA
-
-The `totp` package handles authenticator enrollment, short-lived MFA
-challenges, and single-use recovery codes. Applications must require recent
-authentication before enrollment or removal and encrypt TOTP secrets at rest.
-
-## Passkeys
-
-The `passkey` package handles discoverable WebAuthn registration and sign-in.
-Applications store the ceremony state and full credential records through the
-package interfaces. Enrollment and removal require recent authentication, and
-removal cannot delete the account's last sign-in method.
-
-## Sessions
-
-Authlier supports two ways to manage authenticated sessions:
-
-- Opaque server-side sessions through `sessiontoken`.
-- Ed25519 JWT access tokens through `accesstoken`, paired with rotating opaque
-  refresh tokens through `refreshtoken`.
-
-Applications store only hashes of opaque session and refresh tokens. The
-durable session store determines whether a session is active or revoked.
-The session manager also supports listing a subject's sessions and revoking
-all sessions for an account, with cache invalidation after durable revocation.
+- [Basic usage](website/content/docs/basic-usage.md) connects a browser client
+  to Authlier's routes.
+- [Configuration](website/content/docs/configuration.md) covers route prefixes,
+  browser origins, session modes, and authentication methods.
+- [Bearer tokens](website/content/docs/bearer-tokens.md) covers mobile, CLI, and
+  API clients that cannot use browser cookies.
+- [Storage](website/content/docs/storage.md) explains the official database
+  adapters and custom storage contracts.
+- [Authentication guides](website/content/docs/email-password.md) begin with
+  email and password, then cover verification, recovery, Google, TOTP, and
+  passkeys.
+- [Single sign-on](website/content/docs/sso.md) explains the shared OIDC and
+  SAML identity boundary.
+- [HTTP routes](website/content/docs/http-routes.md) lists the request and
+  response contract for the configured handler.
+- [Security](website/content/docs/security.md) explains secure deployment and
+  the controls that remain the application's responsibility.
+- [Architecture](ARCHITECTURE.md) describes the internal package boundaries.
 
 ## Security
 
@@ -112,7 +81,8 @@ Security reports should be submitted privately according to
 
 ## Contributing
 
-See [`CONTRIBUTING.md`](CONTRIBUTING.md) for development and testing guidance.
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) to report an issue, propose a change,
+or open a pull request.
 
 ## License
 

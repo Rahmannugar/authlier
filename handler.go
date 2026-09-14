@@ -25,6 +25,7 @@ type httpHandler struct {
 	trustedProxies []netip.Prefix
 	crossSitePOSTs map[string]struct{}
 	cookie         http.Cookie
+	sessionMode    SessionMode
 	mux            *http.ServeMux
 }
 
@@ -39,11 +40,21 @@ type userDetails struct {
 }
 
 type userResponse struct {
-	User userDetails `json:"user"`
+	User    userDetails     `json:"user"`
+	Session *sessionDetails `json:"session,omitempty"`
+	Tokens  *tokenDetails   `json:"tokens,omitempty"`
 }
 
 type sessionResponse struct {
 	Session sessionDetails `json:"session"`
+	Tokens  *tokenDetails  `json:"tokens,omitempty"`
+}
+
+type tokenDetails struct {
+	AccessToken           string    `json:"accessToken"`
+	AccessTokenExpiresAt  time.Time `json:"accessTokenExpiresAt"`
+	RefreshToken          string    `json:"refreshToken"`
+	RefreshTokenExpiresAt time.Time `json:"refreshTokenExpiresAt"`
 }
 
 type sessionDetails struct {
@@ -62,6 +73,10 @@ type errorDetails struct {
 }
 
 func newHandler(auth *Auth, config Config, baseURL *url.URL, basePath string) (http.Handler, error) {
+	sessionMode := config.Session.Mode
+	if sessionMode == "" {
+		sessionMode = SessionModeCookie
+	}
 	origins := []string{baseURL.Scheme + "://" + baseURL.Host}
 	for _, rawOrigin := range config.TrustedOrigins {
 		origin, err := url.Parse(strings.TrimSpace(rawOrigin))
@@ -85,7 +100,8 @@ func newHandler(auth *Auth, config Config, baseURL *url.URL, basePath string) (h
 	if cookie.SameSite == 0 {
 		cookie.SameSite = http.SameSiteLaxMode
 	}
-	if cookie.SameSite == http.SameSiteNoneMode && baseURL.Scheme != "https" {
+	if sessionMode == SessionModeCookie &&
+		cookie.SameSite == http.SameSiteNoneMode && baseURL.Scheme != "https" {
 		return nil, fmt.Errorf("%w: SameSite=None requires HTTPS", ErrInvalidConfig)
 	}
 	auth.cookieName = cookie.Name
@@ -102,7 +118,8 @@ func newHandler(auth *Auth, config Config, baseURL *url.URL, basePath string) (h
 			Secure:   baseURL.Scheme == "https",
 			SameSite: cookie.SameSite,
 		},
-		mux: http.NewServeMux(),
+		sessionMode: sessionMode,
+		mux:         http.NewServeMux(),
 	}
 	if auth.password != nil {
 		handler.mux.HandleFunc("POST "+basePath+"/sign-up/email", handler.signUp)
@@ -112,6 +129,9 @@ func newHandler(auth *Auth, config Config, baseURL *url.URL, basePath string) (h
 	handler.mux.HandleFunc("POST "+basePath+"/sign-out", handler.signOut)
 	handler.mux.HandleFunc("GET "+basePath+"/session", handler.session)
 	registerSessionRoutes(handler, basePath)
+	if auth.bearerSessions != nil {
+		registerTokenRoutes(handler, basePath)
+	}
 	if auth.emailVerification != nil {
 		registerEmailVerificationRoutes(handler, basePath)
 	}
@@ -137,7 +157,9 @@ func (handler *httpHandler) ServeHTTP(response http.ResponseWriter, request *htt
 	origin := request.Header.Get("Origin")
 	if origin != "" && handler.validOrigin(origin) {
 		response.Header().Set("Access-Control-Allow-Origin", origin)
-		response.Header().Set("Access-Control-Allow-Credentials", "true")
+		if handler.sessionMode == SessionModeCookie {
+			response.Header().Set("Access-Control-Allow-Credentials", "true")
+		}
 		response.Header().Add("Vary", "Origin")
 	}
 	if request.Method == http.MethodOptions {
@@ -145,15 +167,25 @@ func (handler *httpHandler) ServeHTTP(response http.ResponseWriter, request *htt
 			writeError(response, http.StatusForbidden, "origin_not_allowed")
 			return
 		}
-		response.Header().Set("Access-Control-Allow-Headers", "Content-Type")
+		allowedHeaders := "Content-Type"
+		if handler.sessionMode == SessionModeBearer {
+			allowedHeaders += ", Authorization"
+		}
+		response.Header().Set("Access-Control-Allow-Headers", allowedHeaders)
 		response.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
 		response.WriteHeader(http.StatusNoContent)
 		return
 	}
 	_, crossSitePOST := handler.crossSitePOSTs[request.URL.Path]
-	if request.Method != http.MethodGet && !crossSitePOST && !handler.validOrigin(origin) {
-		writeError(response, http.StatusForbidden, "origin_not_allowed")
-		return
+	if request.Method != http.MethodGet && !crossSitePOST {
+		if origin != "" && !handler.validOrigin(origin) {
+			writeError(response, http.StatusForbidden, "origin_not_allowed")
+			return
+		}
+		if origin == "" && handler.sessionMode != SessionModeBearer {
+			writeError(response, http.StatusForbidden, "origin_not_allowed")
+			return
+		}
 	}
 	handler.mux.ServeHTTP(response, request)
 }
@@ -183,13 +215,13 @@ func (handler *httpHandler) signUp(response http.ResponseWriter, request *http.R
 		writeJSON(response, http.StatusCreated, newUserResponse(user.ID, user.Email))
 		return
 	}
-	issued, err := handler.auth.sessions.Create(request.Context(), user.ID)
-	if err != nil {
-		writeError(response, http.StatusInternalServerError, "session_failed")
+	session, tokens, ok := handler.issueSession(response, request, user.ID)
+	if !ok {
 		return
 	}
-	handler.setSession(response, issued.Token, issued.Record.ExpiresAt)
-	writeJSON(response, http.StatusCreated, newUserResponse(user.ID, user.Email))
+	writeJSON(response, http.StatusCreated, userResponse{
+		User: userDetails{ID: user.ID, Email: user.Email}, Session: &session, Tokens: tokens,
+	})
 }
 
 func (handler *httpHandler) signIn(response http.ResponseWriter, request *http.Request) {
@@ -244,16 +276,43 @@ func (handler *httpHandler) signIn(response http.ResponseWriter, request *http.R
 			return
 		}
 	}
-	issued, err := handler.auth.sessions.Create(request.Context(), login.User.ID)
-	if err != nil {
-		writeError(response, http.StatusInternalServerError, "session_failed")
+	session, tokens, ok := handler.issueSession(response, request, login.User.ID)
+	if !ok {
 		return
 	}
-	handler.setSession(response, issued.Token, issued.Record.ExpiresAt)
-	writeJSON(response, http.StatusOK, newUserResponse(login.User.ID, login.User.Email))
+	writeJSON(response, http.StatusOK, userResponse{
+		User:    userDetails{ID: login.User.ID, Email: login.User.Email},
+		Session: &session, Tokens: tokens,
+	})
 }
 
 func (handler *httpHandler) signOut(response http.ResponseWriter, request *http.Request) {
+	if handler.sessionMode == SessionModeBearer {
+		session, err := handler.auth.ResolveSession(request)
+		if err == nil {
+			if err := handler.auth.bearerSessions.Revoke(request.Context(), session.ID); err != nil {
+				writeError(response, http.StatusInternalServerError, "sign_out_failed")
+				return
+			}
+			response.WriteHeader(http.StatusNoContent)
+			return
+		}
+		if request.ContentLength != 0 {
+			var input refreshTokenRequest
+			if !readJSON(response, request, &input) {
+				return
+			}
+			if err := handler.auth.bearerSessions.RevokeByRefreshToken(
+				request.Context(),
+				input.RefreshToken,
+			); err != nil && !invalidRefreshTokenError(err) {
+				writeError(response, http.StatusInternalServerError, "sign_out_failed")
+				return
+			}
+		}
+		response.WriteHeader(http.StatusNoContent)
+		return
+	}
 	cookie, err := request.Cookie(handler.cookie.Name)
 	if err == nil {
 		if err := handler.auth.sessions.Revoke(request.Context(), cookie.Value); err != nil &&
@@ -267,6 +326,9 @@ func (handler *httpHandler) signOut(response http.ResponseWriter, request *http.
 }
 
 func (handler *httpHandler) clearSession(response http.ResponseWriter) {
+	if handler.sessionMode != SessionModeCookie {
+		return
+	}
 	expired := handler.cookie
 	expired.Value = ""
 	expired.MaxAge = -1
@@ -290,7 +352,7 @@ func (handler *httpHandler) setSession(response http.ResponseWriter, token strin
 	http.SetCookie(response, &cookie)
 }
 
-func newSessionDetails(record sessiontoken.Record) sessionDetails {
+func newSessionDetails(record Session) sessionDetails {
 	return sessionDetails{
 		ID:        record.ID,
 		SubjectID: record.SubjectID,
@@ -305,17 +367,19 @@ func (handler *httpHandler) completeProviderAuthentication(
 	subjectID string,
 	redirectURL string,
 ) {
-	issued, err := handler.auth.sessions.Create(request.Context(), subjectID)
-	if err != nil {
-		writeError(response, http.StatusInternalServerError, "session_failed")
+	if redirectURL != "" && handler.sessionMode == SessionModeBearer {
+		writeError(response, http.StatusBadRequest, "token_redirect_not_supported")
 		return
 	}
-	handler.setSession(response, issued.Token, issued.Record.ExpiresAt)
+	session, tokens, ok := handler.issueSession(response, request, subjectID)
+	if !ok {
+		return
+	}
 	if redirectURL != "" {
 		http.Redirect(response, request, redirectURL, http.StatusSeeOther)
 		return
 	}
-	writeJSON(response, http.StatusOK, sessionResponse{Session: newSessionDetails(issued.Record)})
+	writeJSON(response, http.StatusOK, sessionResponse{Session: session, Tokens: tokens})
 }
 
 func (handler *httpHandler) createAuthenticatedSession(
@@ -323,28 +387,58 @@ func (handler *httpHandler) createAuthenticatedSession(
 	request *http.Request,
 	subjectID string,
 ) {
+	session, tokens, ok := handler.issueSession(response, request, subjectID)
+	if !ok {
+		return
+	}
+	writeJSON(response, http.StatusOK, sessionResponse{Session: session, Tokens: tokens})
+}
+
+func (handler *httpHandler) issueSession(
+	response http.ResponseWriter,
+	request *http.Request,
+	subjectID string,
+) (sessionDetails, *tokenDetails, bool) {
+	if handler.sessionMode == SessionModeBearer {
+		issued, err := handler.auth.bearerSessions.Create(request.Context(), subjectID)
+		if err != nil {
+			writeError(response, http.StatusInternalServerError, "session_failed")
+			return sessionDetails{}, nil, false
+		}
+		return newSessionDetails(issued.Session), newTokenDetails(issued), true
+	}
 	issued, err := handler.auth.sessions.Create(request.Context(), subjectID)
 	if err != nil {
 		writeError(response, http.StatusInternalServerError, "session_failed")
-		return
+		return sessionDetails{}, nil, false
 	}
 	handler.setSession(response, issued.Token, issued.Record.ExpiresAt)
-	writeJSON(response, http.StatusOK, sessionResponse{Session: newSessionDetails(issued.Record)})
+	return newSessionDetails(Session{
+		ID: issued.Record.ID, SubjectID: issued.Record.SubjectID,
+		CreatedAt: issued.Record.CreatedAt, ExpiresAt: issued.Record.ExpiresAt,
+	}), nil, true
+}
+
+func newTokenDetails(issued bearerSessionIssued) *tokenDetails {
+	return &tokenDetails{
+		AccessToken: issued.AccessToken, AccessTokenExpiresAt: issued.AccessTokenExpiresAt,
+		RefreshToken: issued.RefreshToken, RefreshTokenExpiresAt: issued.RefreshTokenExpiresAt,
+	}
 }
 
 func (handler *httpHandler) requireSession(
 	response http.ResponseWriter,
 	request *http.Request,
 	fresh bool,
-) (sessiontoken.Record, bool) {
+) (Session, bool) {
 	record, err := handler.auth.ResolveSession(request)
 	if err != nil {
 		writeError(response, http.StatusUnauthorized, "not_authenticated")
-		return sessiontoken.Record{}, false
+		return Session{}, false
 	}
 	if fresh && time.Now().UTC().After(record.CreatedAt.Add(handler.auth.sessionFreshAge)) {
 		writeError(response, http.StatusForbidden, "recent_authentication_required")
-		return sessiontoken.Record{}, false
+		return Session{}, false
 	}
 	return record, true
 }

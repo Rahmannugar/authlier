@@ -13,10 +13,6 @@ use the same application boundary:
 4. Your identity resolver maps that identity to an Authlier subject ID.
 5. Authlier creates the session.
 
-```text
-connection ID -> provider -> verified identity -> your resolver -> subject ID
-```
-
 Authlier owns protocol validation. Your application owns connection records,
 organization entitlement, membership lookup, and the decision to allow or deny
 the identity.
@@ -38,4 +34,4 @@ when the connection and application membership are active.
 
 Do not link an existing account automatically because an SSO email matches.
 
-Continue with [OIDC](oidc.md) or [SAML](saml.md).
+Continue with [OIDC](/docs/oidc) or [SAML](/docs/saml).

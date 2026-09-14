@@ -25,6 +25,18 @@ if err != nil {
 if err := database.Migrate(ctx); err != nil {
 	return err
 }
+
+auth, err := authlier.New(authlier.Config{
+	AppName:  "Acme",
+	BaseURL:  "https://server.example.com",
+	Database: database,
+	EmailAndPassword: authlier.EmailAndPasswordConfig{
+		Enabled: true,
+	},
+})
+if err != nil {
+	return err
+}
 ```
 
 For MongoDB, `Migrate` creates the indexes that protect unique identities,
@@ -34,5 +46,5 @@ Use a replica set or sharded cluster. Several authentication operations update
 multiple documents in one transaction, and standalone MongoDB servers do not
 provide that transaction behavior.
 
-MongoDB 7 and 8 are covered by Authlier's CI integration tests. Supply a
-`mongodb.SecretCodec` when enabling TOTP.
+Supported versions: MongoDB 7 and 8. Supply a `mongodb.SecretCodec` when
+enabling TOTP.

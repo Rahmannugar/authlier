@@ -76,5 +76,5 @@ An account created through another method can add a password with
 Removing a password uses `POST /api/auth/remove-password` and cannot remove the
 account's last sign-in method.
 
-Add [email verification](email-verification.md) and
-[password recovery](password-recovery.md) for a complete password flow.
+Add [email verification](/docs/email-verification) and
+[password recovery](/docs/password-recovery) for a complete password flow.

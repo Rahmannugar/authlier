@@ -26,7 +26,9 @@ func TestAccessTokenRequiresAValidDurableSession(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create issuer: %v", err)
 	}
-	resolver := &sessionResolver{session: accesstoken.Session{ID: "session_123", SubjectID: "user_123"}}
+	resolver := &sessionResolver{session: accesstoken.Session{
+		ID: "session_123", SubjectID: "user_123", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+	}}
 	verifier, err := accesstoken.NewVerifier(resolver, accesstoken.VerifierConfig{
 		Issuer: "https://auth.example.com", Audience: "example-api",
 		PublicKeys: map[string]ed25519.PublicKey{"current": publicKey},
@@ -67,7 +69,9 @@ func TestAccessTokenRejectsInvalidSignatureAndExpiry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create issuer: %v", err)
 	}
-	resolver := &sessionResolver{session: accesstoken.Session{ID: "session", SubjectID: "user"}}
+	resolver := &sessionResolver{session: accesstoken.Session{
+		ID: "session", SubjectID: "user", CreatedAt: now, ExpiresAt: now.Add(time.Hour),
+	}}
 	verifier, err := accesstoken.NewVerifier(resolver, accesstoken.VerifierConfig{
 		Issuer: "issuer", Audience: "audience",
 		PublicKeys: map[string]ed25519.PublicKey{"key-1": publicKey},
@@ -120,6 +124,33 @@ func TestAccessTokenRejectsInvalidSignatureAndExpiry(t *testing.T) {
 	now = issued.ExpiresAt
 	if _, err := verifier.Verify(context.Background(), issued.Token); !errors.Is(err, accesstoken.ErrInvalidToken) {
 		t.Fatalf("verify expired token: got %v, want invalid token", err)
+	}
+}
+
+func TestAccessTokenDoesNotOutliveDurableSession(t *testing.T) {
+	now := time.Date(2026, time.September, 10, 12, 0, 0, 0, time.UTC)
+	_, privateKey, err := ed25519.GenerateKey(rand.Reader)
+	if err != nil {
+		t.Fatalf("generate signing key: %v", err)
+	}
+	issuer, err := accesstoken.NewIssuer(accesstoken.IssuerConfig{
+		Issuer: "issuer", Audience: "audience", Lifetime: 15 * time.Minute,
+		KeyID: "current", PrivateKey: privateKey, Now: func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("create issuer: %v", err)
+	}
+
+	maximumExpiry := now.Add(2 * time.Minute)
+	issued, err := issuer.IssueUntil("user", "session", maximumExpiry)
+	if err != nil {
+		t.Fatalf("issue capped access token: %v", err)
+	}
+	if !issued.ExpiresAt.Equal(maximumExpiry) {
+		t.Fatalf("expiry=%s want %s", issued.ExpiresAt, maximumExpiry)
+	}
+	if _, err := issuer.IssueUntil("user", "session", now); !errors.Is(err, accesstoken.ErrInactiveSession) {
+		t.Fatalf("issue for expired session: got %v, want inactive session", err)
 	}
 }
 

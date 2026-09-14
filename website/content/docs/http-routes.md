@@ -17,9 +17,10 @@ operation with nothing to return uses `204 No Content`. Errors use one shape:
 {"error":{"code":"invalid_request"}}
 ```
 
-Browser POST requests must come from `BaseURL` or a configured
-`TrustedOrigins` entry. SAML's provider callback is the exception because the
-identity provider posts it from another origin.
+The browser adds an `Origin` header to its POST requests. That origin must match
+`BaseURL` or `TrustedOrigins`. SAML's provider callback is the exception because
+the identity provider posts it from another origin. Native clients using bearer
+mode may omit `Origin`.
 
 ## Email and password
 
@@ -47,12 +48,17 @@ an email address does not belong to an account.
 
 | Route | Request | Result |
 | --- | --- | --- |
-| `GET /api/auth/session` | Session cookie | Returns the current session |
-| `POST /api/auth/sign-out` | Session cookie | Revokes the current session |
-| `GET /api/auth/list-sessions` | Session cookie | Returns active sessions for the current subject |
+| `GET /api/auth/session` | Session cookie or bearer access token | Returns the current session |
+| `POST /api/auth/sign-out` | Current credential | Revokes the current session |
+| `POST /api/auth/token/refresh` | `refreshToken` in bearer mode | Rotates the refresh token and returns a new token pair |
+| `GET /api/auth/list-sessions` | Session cookie or bearer access token | Returns active sessions for the current subject |
 | `POST /api/auth/revoke-session` | `sessionId` | Revokes one session owned by the current subject |
-| `POST /api/auth/revoke-other-sessions` | Session cookie | Revokes the others and replaces the current session |
-| `POST /api/auth/revoke-sessions` | Session cookie | Revokes every session for the current subject |
+| `POST /api/auth/revoke-other-sessions` | Current credential | Revokes the others and replaces the current session |
+| `POST /api/auth/revoke-sessions` | Current credential | Revokes every session for the current subject |
+
+In bearer mode, authenticated routes use `Authorization: Bearer <access-token>`.
+Authentication and refresh responses include the `tokens` object described in
+[Bearer tokens](/docs/bearer-tokens).
 
 ## Google
 

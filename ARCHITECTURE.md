@@ -33,6 +33,11 @@ authlier/
 
 ## Sessions
 
+The root configuration selects one session mode. Browser applications normally
+use opaque cookie sessions. Mobile, CLI, and API clients use JWT access tokens
+with rotating opaque refresh tokens. `ResolveSession` returns the same root
+`Session` type in both modes.
+
 ### Opaque sessions
 
 ```text
@@ -67,7 +72,8 @@ opaque refresh token
 
 After validating a JWT, Authlier checks the stored session so a revoked session
 cannot authenticate. Reusing an old refresh token revokes the session and its
-refresh tokens.
+refresh tokens. The initial access session and refresh token are stored in one
+atomic adapter operation.
 
 ## Passwords
 

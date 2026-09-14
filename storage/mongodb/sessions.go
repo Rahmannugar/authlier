@@ -169,9 +169,26 @@ type accessSessionDocument struct {
 	RevokedAt *time.Time `bson:"revoked_at,omitempty"`
 }
 
-func (store *AccessSessionStore) Create(ctx context.Context, session authlier.AccessSession) error {
-	_, err := store.adapter.collection(accessSessionsCollection).InsertOne(ctx, accessSessionDocument{session.ID, session.SubjectID, session.CreatedAt, session.ExpiresAt, session.RevokedAt})
-	return err
+func (store *AccessSessionStore) CreateSession(
+	ctx context.Context,
+	session authlier.AccessSession,
+	refreshToken refreshtoken.Record,
+) error {
+	return store.adapter.transaction(ctx, func(tx context.Context) error {
+		if _, err := store.adapter.collection(accessSessionsCollection).InsertOne(
+			tx,
+			accessSessionDocument{
+				session.ID, session.SubjectID, session.CreatedAt, session.ExpiresAt, session.RevokedAt,
+			},
+		); err != nil {
+			return err
+		}
+		_, err := store.adapter.collection(refreshTokensCollection).InsertOne(
+			tx,
+			refreshDocumentFrom(refreshToken),
+		)
+		return err
+	})
 }
 
 func (store *AccessSessionStore) ResolveSession(ctx context.Context, sessionID string) (accesstoken.Session, error) {
@@ -180,12 +197,85 @@ func (store *AccessSessionStore) ResolveSession(ctx context.Context, sessionID s
 		"_id": sessionID, "revoked_at": bson.M{"$exists": false},
 		"$expr": bson.M{"$gt": bson.A{"$expires_at", "$$NOW"}},
 	}).Decode(&document)
-	return accesstoken.Session{ID: document.ID, SubjectID: document.SubjectID}, err
+	return accesstoken.Session{
+		ID: document.ID, SubjectID: document.SubjectID,
+		CreatedAt: document.CreatedAt, ExpiresAt: document.ExpiresAt,
+	}, err
+}
+
+func (store *AccessSessionStore) ListBySubject(
+	ctx context.Context,
+	subjectID string,
+) ([]authlier.AccessSession, error) {
+	cursor, err := store.adapter.collection(accessSessionsCollection).Find(
+		ctx,
+		bson.M{"subject_id": subjectID},
+		options.Find().SetSort(bson.D{{Key: "created_at", Value: -1}}),
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+	var documents []accessSessionDocument
+	if err := cursor.All(ctx, &documents); err != nil {
+		return nil, err
+	}
+	records := make([]authlier.AccessSession, len(documents))
+	for index, document := range documents {
+		records[index] = authlier.AccessSession{
+			ID: document.ID, SubjectID: document.SubjectID,
+			CreatedAt: document.CreatedAt, ExpiresAt: document.ExpiresAt,
+			RevokedAt: document.RevokedAt,
+		}
+	}
+	return records, nil
 }
 
 func (store *AccessSessionStore) Revoke(ctx context.Context, sessionID string, revokedAt time.Time) error {
-	_, err := store.adapter.collection(accessSessionsCollection).UpdateOne(ctx, bson.M{"_id": sessionID, "revoked_at": bson.M{"$exists": false}}, bson.M{"$set": bson.M{"revoked_at": revokedAt}})
-	return err
+	return store.adapter.transaction(ctx, func(tx context.Context) error {
+		return store.adapter.revokeAccessSession(tx, sessionID, revokedAt)
+	})
+}
+
+func (store *AccessSessionStore) RevokeAll(
+	ctx context.Context,
+	subjectID string,
+	revokedAt time.Time,
+) error {
+	return store.adapter.transaction(ctx, func(tx context.Context) error {
+		cursor, err := store.adapter.collection(accessSessionsCollection).Find(
+			tx,
+			bson.M{"subject_id": subjectID},
+			options.Find().SetProjection(bson.M{"_id": 1}),
+		)
+		if err != nil {
+			return err
+		}
+		defer cursor.Close(tx)
+		var sessions []accessSessionDocument
+		if err := cursor.All(tx, &sessions); err != nil {
+			return err
+		}
+		ids := make([]string, len(sessions))
+		for index, session := range sessions {
+			ids[index] = session.ID
+		}
+		if len(ids) > 0 {
+			if _, err := store.adapter.collection(refreshTokensCollection).UpdateMany(
+				tx,
+				bson.M{"session_id": bson.M{"$in": ids}, "revoked_at": bson.M{"$exists": false}},
+				bson.M{"$set": bson.M{"revoked_at": revokedAt}},
+			); err != nil {
+				return err
+			}
+		}
+		_, err = store.adapter.collection(accessSessionsCollection).UpdateMany(
+			tx,
+			bson.M{"subject_id": subjectID, "revoked_at": bson.M{"$exists": false}},
+			bson.M{"$set": bson.M{"revoked_at": revokedAt}},
+		)
+		return err
+	})
 }
 
 type refreshTokenDocument struct {

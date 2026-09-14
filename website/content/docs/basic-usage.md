@@ -1,18 +1,18 @@
 ---
 title: Basic usage
-description: Connect a browser interface to Authlier's standard HTTP routes.
+description: Connect a browser client to Authlier's HTTP routes.
 icon: Browser
 ---
 
-Authlier runs inside your Go application. The browser calls the mounted
-authentication routes, and Authlier replies with JSON or redirects to an
-identity provider when required.
+Authlier runs inside your Go server. The browser client calls its mounted
+authentication routes. Authlier replies with JSON or redirects the browser to
+an identity provider when required.
 
 The examples below assume the default `/api/auth` base path.
 
 ## Create an account
 
-```js
+```ts
 const response = await fetch('/api/auth/sign-up/email', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
@@ -36,7 +36,7 @@ later same-origin requests.
 
 ## Sign in
 
-```js
+```ts
 const response = await fetch('/api/auth/sign-in/email', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
@@ -45,11 +45,11 @@ const response = await fetch('/api/auth/sign-in/email', {
 ```
 
 If TOTP is enabled for the account, this route returns a short-lived challenge
-instead of creating a session. See [TOTP](totp.md) for the second step.
+instead of creating a session. See [TOTP](/docs/totp) for the second step.
 
 ## Read the session
 
-```js
+```ts
 const response = await fetch('/api/auth/session');
 
 if (response.status === 401) {
@@ -61,17 +61,23 @@ if (response.status === 401) {
 ```
 
 Server-side Go handlers should call `auth.ResolveSession(request)` directly.
-See [Sessions](sessions.md).
+See [Sessions](/docs/sessions).
 
 ## Sign out
 
-```js
+```ts
 await fetch('/api/auth/sign-out', { method: 'POST' });
 ```
 
-For a frontend on another allowed origin, add that origin to `TrustedOrigins`
-and use `credentials: 'include'` in each request. See
-[Configuration](configuration.md#browser-origins).
+For a browser client on another origin, add the client origin to
+`TrustedOrigins` and use `credentials: 'include'` in each request. The browser
+adds the `Origin` request header itself; frontend code cannot declare an origin
+trusted. Authlier checks that header and sends the response headers that allow
+the browser to receive the result. See
+[Configuration](/docs/configuration#browser-origins).
+
+Mobile, CLI, and server-to-server clients should use
+[bearer-token sessions](/docs/bearer-tokens) instead of browser cookies.
 
 ## Handle errors
 
@@ -86,4 +92,4 @@ Errors use one stable JSON shape:
 ```
 
 Use the code to choose the interface state. Do not show raw server errors to
-the user. The complete list is in [HTTP routes](http-routes.md).
+the user. The complete list is in [HTTP routes](/docs/http-routes).
