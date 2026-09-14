@@ -77,7 +77,12 @@ atomic adapter operation.
 
 ## Passwords
 
-Argon2id is the default. Bcrypt supports compatible applications and migrations.
+The root email-and-password configuration selects the algorithm used for new
+and deliberately replaced credentials. Argon2id is the default. Bcrypt supports
+legacy compatibility and staged migrations. Verification recognizes both
+formats regardless of the write selection. Successful bcrypt authentication
+upgrades the credential when Argon2id is selected, while an existing Argon2id
+credential is never automatically downgraded to bcrypt.
 
 ## Email and password authentication
 

@@ -9,6 +9,10 @@ Authlier verifies identities and manages authentication records. Your
 application keeps control of profiles, roles, permissions, and other product
 data.
 
+New passwords use Argon2id by default. Applications can select bcrypt when a
+legacy credential system requires temporary write compatibility; verification
+continues to recognize both formats for staged migration.
+
 ## Installation
 
 ```bash

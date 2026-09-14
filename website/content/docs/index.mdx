@@ -41,6 +41,10 @@ data and enforce application permissions.
 | Passkeys | WebAuthn registration and passwordless sign-in |
 | OIDC and SAML | Single sign-on with organization identity providers |
 
+New passwords use Argon2id by default. Applications that must remain compatible
+with a legacy credential system can select bcrypt while they complete a staged
+migration. Authlier continues to recognize both supported formats.
+
 Start with [Getting started](/docs/getting-started) for a complete working Go
 server. [Basic usage](/docs/basic-usage) continues with browser client code,
 and [Configuration](/docs/configuration) explains every top-level choice before

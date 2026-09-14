@@ -1,11 +1,14 @@
 import { LandingNavigation } from '@/components/landing-navigation';
 import { LandingStart } from '@/components/landing-start';
+import { getGitHubStarCount } from '@/lib/github';
 
-export default function HomePage() {
+export default async function HomePage() {
+  const starCount = await getGitHubStarCount();
+
   return (
     <main className="landing">
       <section className="landing-hero">
-        <LandingNavigation />
+        <LandingNavigation starCount={starCount} />
 
         <div className="landing-hero__content">
           <h1>

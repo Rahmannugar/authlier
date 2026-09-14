@@ -76,6 +76,35 @@ part of `BasePath`.
 The examples use Go's standard `net/http` package, not a third-party mux. Any
 router that accepts an `http.Handler` can mount the same Authlier handler.
 
+## Choose a password-hashing algorithm
+
+Email and password authentication uses Argon2id by default. Most applications
+should keep that default:
+
+```go
+EmailAndPassword: authlier.EmailAndPasswordConfig{
+	Enabled:               true,
+	PasswordHashAlgorithm: password.Argon2id,
+},
+```
+
+Applications that must remain compatible with a legacy credential system can
+select bcrypt:
+
+```go
+EmailAndPassword: authlier.EmailAndPasswordConfig{
+	Enabled:               true,
+	PasswordHashAlgorithm: password.Bcrypt,
+},
+```
+
+Import the algorithm constants from
+`github.com/Rahmannugar/authlier/password`. The selection applies to sign-up,
+setting or changing a password, password recovery, and automatic hash upgrades.
+Authlier still recognizes both supported formats and never replaces an
+Argon2id credential with bcrypt during sign-in. Read
+[Email and password](/docs/email-password) before selecting bcrypt.
+
 ## Browser origins
 
 `BaseURL` is trusted automatically. Add `TrustedOrigins` only for browser

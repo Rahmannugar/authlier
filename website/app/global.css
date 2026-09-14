@@ -279,6 +279,15 @@ h6 {
   background: var(--authlier-ink);
 }
 
+.github-stars__count {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding-left: 9px;
+  border-left: 1px solid currentColor;
+  font-variant-numeric: tabular-nums;
+}
+
 .landing-nav__menu,
 .landing-mobile-menu {
   display: none;
@@ -551,4 +560,37 @@ h6 {
 
 .dark .authlier-wordmark > span {
   color: #70c2ff;
+}
+
+.docs-github-stars {
+  display: inline-flex;
+  width: fit-content;
+  min-height: 38px;
+  align-self: flex-start;
+  align-items: center;
+  gap: 8px;
+  margin-top: 18px;
+  padding-inline: 13px;
+  border: 1px solid var(--color-fd-border);
+  border-radius: 999px;
+  color: var(--color-fd-foreground);
+  background: var(--color-fd-secondary);
+  font-size: 13px;
+  font-weight: 650;
+  text-decoration: none;
+  transition:
+    border-color 160ms ease,
+    color 160ms ease,
+    background-color 160ms ease;
+}
+
+.docs-github-stars:hover {
+  border-color: var(--color-fd-primary);
+  color: var(--color-fd-primary);
+  background: var(--color-fd-accent);
+}
+
+.docs-github-stars:focus-visible {
+  outline: 2px solid var(--color-fd-ring);
+  outline-offset: 2px;
 }

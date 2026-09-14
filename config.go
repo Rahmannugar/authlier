@@ -11,6 +11,7 @@ import (
 	"github.com/Rahmannugar/authlier/googleoauth"
 	"github.com/Rahmannugar/authlier/oidc"
 	"github.com/Rahmannugar/authlier/passkey"
+	"github.com/Rahmannugar/authlier/password"
 	"github.com/Rahmannugar/authlier/passwordreset"
 	"github.com/Rahmannugar/authlier/saml"
 	"github.com/Rahmannugar/authlier/sessiontoken"
@@ -27,6 +28,7 @@ const (
 type EmailAndPasswordConfig struct {
 	Enabled                  bool
 	RequireEmailVerification bool
+	PasswordHashAlgorithm    password.Algorithm
 	ValidatePassword         emailpassword.PasswordValidator
 	AttemptGuard             emailpassword.AttemptGuard
 	SecurityEvents           emailpassword.SecurityEventSink

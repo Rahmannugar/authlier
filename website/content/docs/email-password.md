@@ -20,9 +20,61 @@ EmailAndPassword: authlier.EmailAndPasswordConfig{
 ```
 
 Authlier normalizes email addresses and hashes new passwords securely. New
-passwords use Argon2id by default. Existing bcrypt hashes can also be verified
-when an application is migrating accounts, and a successful sign-in can replace
-an older supported hash with the current format.
+passwords use Argon2id by default. The default applies to sign-up, setting or
+changing a password, password recovery, and automatic hash upgrades.
+
+## Choose Argon2id or bcrypt
+
+Most applications should keep Argon2id, either by omitting the setting or by
+selecting it explicitly:
+
+```go
+import "github.com/Rahmannugar/authlier/password"
+
+EmailAndPassword: authlier.EmailAndPasswordConfig{
+	Enabled:               true,
+	PasswordHashAlgorithm: password.Argon2id,
+},
+```
+
+Select bcrypt only when an existing system must continue reading newly written
+password credentials during a staged migration:
+
+```go
+EmailAndPassword: authlier.EmailAndPasswordConfig{
+	Enabled:               true,
+	PasswordHashAlgorithm: password.Bcrypt,
+},
+```
+
+Authlier rejects an unsupported algorithm when the server starts. Bcrypt has a
+72-byte password input limit; attempts to hash a longer password fail rather
+than being silently truncated. Argon2id does not have that bcrypt-specific
+limit.
+
+## Migrate existing password hashes
+
+Authlier recognizes the format encoded in each stored password hash and can
+verify both Argon2id and bcrypt regardless of the configured write algorithm.
+A hash cannot be converted directly because password hashing is one-way.
+Instead, Authlier upgrades a credential after a successful sign-in:
+
+1. Authlier verifies the submitted password against the stored hash.
+2. If the credential needs an upgrade, Authlier hashes the submitted password
+   with the configured algorithm and current parameters.
+3. Authlier replaces the stored hash only if it still matches the value that
+   was verified. This conditional write prevents a concurrent password change
+   or reset from being overwritten.
+
+With the Argon2id default, a successful bcrypt sign-in replaces that credential
+with Argon2id. Argon2id hashes using older supported parameters are also
+refreshed. Accounts that never sign in remain unchanged until the user signs in,
+changes the password, or completes password recovery.
+
+Selecting bcrypt writes bcrypt for new or deliberately replaced passwords and
+refreshes bcrypt hashes with an outdated cost. It never downgrades an existing
+Argon2id credential to bcrypt. This lets an application keep temporary legacy
+compatibility without weakening credentials that already use Argon2id.
 
 ## Sign up and sign in
 

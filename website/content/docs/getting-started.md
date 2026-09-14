@@ -118,7 +118,10 @@ This configuration tells Authlier:
 - `EmailAndPassword.Enabled` adds the email sign-up and sign-in flows.
 
 Cookie sessions are used because no other session mode was selected. The
-default Authlier route prefix is `/api/auth`.
+default Authlier route prefix is `/api/auth`. New passwords use the recommended
+Argon2id default because no `PasswordHashAlgorithm` was selected. The
+[Email and password](/docs/email-password) guide explains the bcrypt
+compatibility option and password-hash migration.
 
 ## 3. Mount Authlier and protect an application route
 

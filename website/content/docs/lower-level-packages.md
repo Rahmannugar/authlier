@@ -28,3 +28,9 @@ including:
 Use lower-level packages because the application needs a different boundary,
 not merely to rename Authlier's routes. The standard handler is easier to keep
 correct when a browser client communicates with a Go server over HTTP.
+
+The public `password` package also exposes `HashWithAlgorithm` and
+`VerifyWithAlgorithm` for deliberately composed workflows. Applications using
+the standard handler should select `EmailAndPassword.PasswordHashAlgorithm`
+instead so sign-up, credential changes, recovery, dummy verification, and hash
+upgrades share one policy.

@@ -64,6 +64,16 @@ Authlier prevents password, Google, or passkey removal when that credential is
 the last available sign-in method. The application should also require a recent
 session before sensitive enrollment, linking, or credential replacement.
 
+## Prefer Argon2id for passwords
+
+Authlier uses Argon2id for new passwords by default. Keep that default for new
+applications. Select bcrypt only when a legacy system must remain compatible
+with newly written credentials during a staged migration. Authlier can verify
+both formats, upgrades bcrypt credentials to Argon2id after successful sign-in
+when Argon2id is selected, and never automatically downgrades an existing
+Argon2id credential to bcrypt. See [Email and password](/docs/email-password)
+for the complete migration behavior.
+
 ## Keep dependencies current
 
 Authlier delegates password hashing and authentication protocols to established

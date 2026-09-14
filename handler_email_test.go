@@ -12,6 +12,7 @@ import (
 
 	"github.com/Rahmannugar/authlier/emailpassword"
 	"github.com/Rahmannugar/authlier/emailverification"
+	"github.com/Rahmannugar/authlier/password"
 	"github.com/Rahmannugar/authlier/passwordreset"
 	"github.com/Rahmannugar/authlier/sessiontoken"
 )
@@ -144,6 +145,139 @@ func TestRequiredEmailVerificationControlsSessionCreation(t *testing.T) {
 	)
 	if response.Code != http.StatusOK || sessions.created != 1 {
 		t.Fatalf("verify email: status=%d sessions=%d body=%s", response.Code, sessions.created, response.Body.String())
+	}
+}
+
+func TestConfiguredBcryptHashesNewPasswords(t *testing.T) {
+	accounts := &authenticationStore{}
+	database := handlerDatabase{stores: Stores{
+		EmailPassword: accounts,
+		Sessions:      newSessionStore(time.Now().UTC()),
+	}}
+	auth, err := New(Config{
+		AppName:  "Acme",
+		BaseURL:  "https://app.example.com",
+		Database: database,
+		EmailAndPassword: EmailAndPasswordConfig{
+			Enabled:               true,
+			PasswordHashAlgorithm: password.Bcrypt,
+		},
+		Session: SessionConfig{Lifetime: time.Hour},
+	})
+	if err != nil {
+		t.Fatalf("create Authlier with bcrypt: %v", err)
+	}
+
+	response := httptest.NewRecorder()
+	auth.Handler().ServeHTTP(response, newAuthRequest(
+		"/api/auth/sign-up/email",
+		`{"email":"owner@example.com","password":"correct horse battery staple"}`,
+	))
+	if response.Code != http.StatusCreated {
+		t.Fatalf("sign up: status=%d body=%s", response.Code, response.Body.String())
+	}
+	verification, err := password.VerifyWithAlgorithm(
+		"correct horse battery staple",
+		accounts.passwordHash,
+		password.Bcrypt,
+	)
+	if err != nil || !verification.Matches || verification.NeedsRehash {
+		t.Fatalf("password was not stored as current bcrypt: verification=%+v err=%v", verification, err)
+	}
+}
+
+func TestConfiguredBcryptRejectsPasswordsBeyondItsInputLimit(t *testing.T) {
+	accounts := &authenticationStore{}
+	database := handlerDatabase{stores: Stores{
+		EmailPassword: accounts,
+		Sessions:      newSessionStore(time.Now().UTC()),
+	}}
+	auth, err := New(Config{
+		AppName:  "Acme",
+		BaseURL:  "https://app.example.com",
+		Database: database,
+		EmailAndPassword: EmailAndPasswordConfig{
+			Enabled:               true,
+			PasswordHashAlgorithm: password.Bcrypt,
+		},
+		Session: SessionConfig{Lifetime: time.Hour},
+	})
+	if err != nil {
+		t.Fatalf("create Authlier with bcrypt: %v", err)
+	}
+
+	response := httptest.NewRecorder()
+	auth.Handler().ServeHTTP(response, newAuthRequest(
+		"/api/auth/sign-up/email",
+		`{"email":"owner@example.com","password":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`,
+	))
+	if response.Code != http.StatusBadRequest || accounts.user.ID != "" ||
+		!bytes.Contains(response.Body.Bytes(), []byte(`"code":"invalid_request"`)) {
+		t.Fatalf("long bcrypt password: status=%d user=%+v body=%s", response.Code, accounts.user, response.Body.String())
+	}
+}
+
+func TestConfiguredBcryptHashesPasswordRecovery(t *testing.T) {
+	accounts := &authenticationStore{}
+	resets := &resetStore{user: passwordreset.User{ID: "user_123", Email: "owner@example.com"}}
+	sender := &resetSender{}
+	database := handlerDatabase{stores: Stores{
+		EmailPassword: accounts,
+		PasswordReset: resets,
+		Sessions:      newSessionStore(time.Now().UTC()),
+	}}
+	auth, err := New(Config{
+		AppName:  "Acme",
+		BaseURL:  "https://app.example.com",
+		Database: database,
+		EmailAndPassword: EmailAndPasswordConfig{
+			Enabled:               true,
+			PasswordHashAlgorithm: password.Bcrypt,
+		},
+		PasswordReset: PasswordResetConfig{
+			Enabled: true,
+			Sender:  sender,
+		},
+		Session: SessionConfig{Lifetime: time.Hour},
+	})
+	if err != nil {
+		t.Fatalf("create Authlier with bcrypt recovery: %v", err)
+	}
+
+	response := httptest.NewRecorder()
+	auth.Handler().ServeHTTP(response, newAuthRequest(
+		"/api/auth/forgot-password",
+		`{"email":"owner@example.com"}`,
+	))
+	if response.Code != http.StatusAccepted || sender.token == "" {
+		t.Fatalf("request password reset: status=%d token=%q", response.Code, sender.token)
+	}
+	response = httptest.NewRecorder()
+	auth.Handler().ServeHTTP(response, newAuthRequest(
+		"/api/auth/reset-password",
+		`{"token":"`+sender.token+`","newPassword":"a new password"}`,
+	))
+	if response.Code != http.StatusOK {
+		t.Fatalf("reset password: status=%d body=%s", response.Code, response.Body.String())
+	}
+	verification, err := password.VerifyWithAlgorithm("a new password", resets.passwordHash, password.Bcrypt)
+	if err != nil || !verification.Matches || verification.NeedsRehash {
+		t.Fatalf("reset password was not stored as current bcrypt: verification=%+v err=%v", verification, err)
+	}
+}
+
+func TestUnsupportedPasswordHashAlgorithmIsRejected(t *testing.T) {
+	_, err := New(Config{
+		AppName:  "Acme",
+		BaseURL:  "https://app.example.com",
+		Database: handlerDatabase{},
+		EmailAndPassword: EmailAndPasswordConfig{
+			Enabled:               true,
+			PasswordHashAlgorithm: password.Algorithm("unsupported"),
+		},
+	})
+	if !errors.Is(err, ErrInvalidConfig) {
+		t.Fatalf("unsupported password hash algorithm: got %v, want invalid config", err)
 	}
 }
 
