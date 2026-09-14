@@ -4,9 +4,9 @@ description: See how Authlier connects HTTP routes, authentication methods, sess
 icon: Structure
 ---
 
-Authlier is part of your Go server. It does not run as a separate service. The
+Authlier is a Go library that your application compiles into its server. The
 root `authlier` package creates the configured authentication methods, connects
-them to storage, and exposes one `http.Handler`.
+them to storage, and exposes one `http.Handler` for the server to mount.
 
 ## Authentication requests
 
@@ -18,8 +18,8 @@ authentication records through the configured storage adapter.
 Authlier creates a session only after every required authentication step has
 succeeded. In cookie mode, it stores the opaque token hash and sends the raw
 token to the browser in an HttpOnly cookie. In bearer mode, it returns a
-short-lived access token and a rotating refresh token to the native or API
-client.
+short-lived access token and a rotating refresh token to the web, mobile, CLI,
+or server client.
 
 ## Application requests
 

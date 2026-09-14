@@ -4,14 +4,30 @@ description: Add Google sign-in and safely link Google accounts.
 icon: Google
 ---
 
-Create an OAuth 2.0 web application in Google Cloud. Add this authorized
+Google authentication lets a browser authenticate with a Google account and
+receive an Authlier cookie session. Authlier handles the OAuth authorization
+code flow, while your application supplies the Google client credentials and
+the frontend page to open afterward.
+
+The flow is:
+
+1. The browser asks your Go server to start Google sign-in.
+2. Authlier returns a Google authorization URL.
+3. Google redirects the browser to the Authlier callback on your Go server.
+4. Authlier verifies the response, finds or creates the linked Authlier user,
+   creates the cookie session, and redirects to your frontend.
+
+## Configure Google Cloud
+
+Create an OAuth 2.0 web application in Google Cloud. Register this authorized
 redirect URI:
 
 ```text
 https://server.example.com/api/auth/callback/google
 ```
 
-Use your application's public origin and Authlier base path.
+Use the Go server's public origin and the configured Authlier base path. This
+must match the callback Google receives exactly.
 
 ## Configure Google
 
@@ -24,9 +40,11 @@ Google: authlier.GoogleConfig{
 },
 ```
 
-`SuccessRedirectURL` is the browser-client page Authlier opens after creating
-the cookie session. Authlier derives the provider callback from `BaseURL`; set
-`RedirectURL` only when Google is configured with another callback.
+`ClientID` and `ClientSecret` come from Google Cloud and stay in server-side
+configuration. `SuccessRedirectURL` is the frontend page Authlier opens after
+creating the cookie session. Authlier derives the provider callback from
+`BaseURL` and `BasePath`; set `RedirectURL` only when Google is registered with
+another callback.
 
 ## Start sign-in
 
@@ -36,9 +54,12 @@ const { url } = await response.json();
 window.location.assign(url);
 ```
 
+This example uses a same-origin browser client. A separate frontend origin uses
+the full Go server URL and must appear in `TrustedOrigins`.
+
 Google redirects to Authlier. Authlier validates state, nonce, PKCE, and the
-returned identity, creates the session, then redirects to the configured client
-page.
+returned identity, creates the session, then redirects to the configured
+frontend page.
 
 Google authentication is available only in cookie mode in this release; see
 [Bearer tokens](/docs/bearer-tokens#browser-provider-flows).

@@ -1,16 +1,42 @@
 ---
 title: Getting started
-description: Install Authlier and run a complete email and password setup.
+description: Add Authlier to a Go server and create your first authenticated session.
 icon: Rocket
 ---
 
-This guide builds a small Go server with email and password authentication. It
-uses PostgreSQL and Go's standard HTTP server, but the same Authlier
-configuration works with MySQL, MongoDB, or Redis.
+This guide adds email and password authentication to a small Go server. By the
+end, a client can create an account and use the returned session to call a
+protected server route.
 
-You need Go 1.26 or newer and a running PostgreSQL database.
+The example uses PostgreSQL and Go's standard `net/http` package. Authlier also
+has adapters for MySQL, MongoDB, and Redis, and it works with any Go router that
+can mount an `http.Handler`.
 
-## Install Authlier
+## What you are building
+
+Authlier is a library inside your Go server, not a separate authentication
+service. A complete request passes through these parts:
+
+1. A client calls an authentication route on your Go server.
+2. The mounted Authlier handler verifies the request and creates a session.
+3. The PostgreSQL adapter stores Authlier's users, credentials, and sessions in
+   your database.
+4. Your own server handlers call `ResolveSession` to learn which Authlier user
+   made a request.
+
+Authlier handles authentication. Your application still owns its profiles,
+business data, roles, and permissions.
+
+## Before you begin
+
+You need Go 1.26 or newer and a PostgreSQL database that your server can reach.
+Create a Go module if the application does not already have one:
+
+```bash
+go mod init example.com/acme
+```
+
+Install Authlier, its PostgreSQL adapter, and the PostgreSQL driver:
 
 ```bash
 go get github.com/Rahmannugar/authlier
@@ -18,15 +44,15 @@ go get github.com/Rahmannugar/authlier/storage/postgres
 go get github.com/jackc/pgx/v5
 ```
 
-Set the database connection used by your application:
+Set the connection string used by the example:
 
 ```bash
 export DATABASE_URL='postgres://postgres:postgres@localhost:5432/example?sslmode=disable'
 ```
 
-## Create the server
+## 1. Connect the database
 
-Create `main.go`:
+Create `main.go` and begin by opening a PostgreSQL connection:
 
 ```go
 package main
@@ -58,9 +84,20 @@ func main() {
 	if err := database.Migrate(ctx); err != nil {
 		log.Fatal(err)
 	}
+```
 
+`postgres.New` creates the Authlier adapter around the connection pool.
+`Migrate` creates the tables Authlier needs and records which migrations have
+run. It is safe to call during later starts because completed migrations are
+skipped.
+
+## 2. Configure Authlier
+
+Continue inside `main`:
+
+```go
 	auth, err := authlier.New(authlier.Config{
-		AppName:  "Example",
+		AppName:  "Acme",
 		BaseURL:  "http://localhost:8080",
 		Database: database,
 		EmailAndPassword: authlier.EmailAndPasswordConfig{
@@ -70,8 +107,26 @@ func main() {
 	if err != nil {
 		log.Fatal(err)
 	}
+```
 
+This configuration tells Authlier:
+
+- `AppName` is the name shown by authentication features such as authenticator
+  apps and passkeys.
+- `BaseURL` is the public origin of this Go server. It is not a frontend URL.
+- `Database` is the adapter Authlier will use for its own records.
+- `EmailAndPassword.Enabled` adds the email sign-up and sign-in flows.
+
+Cookie sessions are used because no other session mode was selected. The
+default Authlier route prefix is `/api/auth`.
+
+## 3. Mount Authlier and protect an application route
+
+Finish `main`:
+
+```go
 	http.Handle("/api/auth/", auth.Handler())
+
 	http.HandleFunc("GET /account", func(response http.ResponseWriter, request *http.Request) {
 		session, err := auth.ResolveSession(request)
 		if err != nil {
@@ -86,29 +141,26 @@ func main() {
 }
 ```
 
-Run the application:
+`auth.Handler()` serves Authlier's HTTP routes. The `/account` route belongs to
+your application. It uses `ResolveSession` to reject signed-out requests and
+obtain the stable Authlier user ID from a valid session.
+
+This example registers both handlers on Go's default `http.ServeMux`. If your
+server already creates its own mux or uses another router, mount
+`auth.Handler()` there at the same prefix.
+
+## 4. Start the server
 
 ```bash
 go run .
 ```
 
-The setup has four parts:
+The server now exposes Authlier under `http://localhost:8080/api/auth` and the
+application route at `http://localhost:8080/account`.
 
-1. Connect to PostgreSQL.
-2. Run Authlier's migrations.
-3. Enable email and password authentication.
-4. Mount the Authlier handler at `/api/auth/`, which matches the default
-   `BasePath`.
+## 5. Create an account
 
-This example uses Go's default `http.ServeMux`: `http.Handle` registers routes
-on it, and passing `nil` to `http.ListenAndServe` tells the server to use it.
-Applications that create their own `http.NewServeMux()` can register the same
-handler on that mux instead.
-
-`Migrate` creates Authlier's tables and records each applied migration. Calling
-it again skips migrations already recorded.
-
-## Create an account
+Call the email sign-up route:
 
 ```bash
 curl --include \
@@ -119,34 +171,28 @@ curl --include \
   http://localhost:8080/api/auth/sign-up/email
 ```
 
-`curl` is not a browser, so the command includes `Origin` explicitly. A browser
-adds that header automatically. The response contains the user and sets an
-HttpOnly session cookie. Send that cookie to an authenticated route:
+The `Origin` header says which browser origin initiated a state-changing
+request. Browsers add it automatically; this `curl` example supplies it because
+`curl` is not a browser. Authlier accepts the server's own origin by default.
+
+The response creates an HttpOnly session cookie and `--cookie-jar` saves it to
+`cookies.txt`. Use that cookie to call the protected application route:
 
 ```bash
 curl --cookie cookies.txt http://localhost:8080/account
 ```
 
-## What just happened
+The response contains the Authlier subject ID. A real application would use
+that ID to load its profile or other business data.
 
-The sign-up route normalized the email, validated and hashed the password,
-created the Authlier user, created a server-side session, and set an HttpOnly
-cookie. Only the token hash was written to the database.
+## What Authlier did
 
-The `/account` handler called `ResolveSession`. It received the authenticated
-subject ID and can use that ID to load application data and enforce
-permissions.
+For the sign-up request, Authlier normalized the email address, validated and
+hashed the password, created the user, stored a hash of the session token, and
+set the raw session token in an HttpOnly cookie. The raw token was not written
+to the database.
 
-The handler also provides:
-
-- `POST /api/auth/sign-in/email`
-- `POST /api/auth/sign-out`
-- `GET /api/auth/session`
-- `GET /api/auth/list-sessions`
-- session revocation routes
-
-Only enabled features add their routes. Continue with
-[Basic usage](/docs/basic-usage) to call these routes from a browser client,
-[Configuration](/docs/configuration) to change the route prefix and other
-defaults, [Bearer tokens](/docs/bearer-tokens) for mobile or CLI clients, or
-[Storage](/docs/storage) to choose another database.
+You now have the complete server-side loop. Continue with
+[Basic usage](/docs/basic-usage) to connect a browser client, then read
+[Configuration](/docs/configuration) to choose the public URL, route prefix,
+trusted client origins, session style, and additional sign-in methods.

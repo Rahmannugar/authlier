@@ -13,9 +13,10 @@ export default function HomePage() {
             <span>for Go applications.</span>
           </h1>
           <p>
-            Add passwords, sessions, MFA, passkeys, OAuth, OIDC, and SAML to
-            your Go application through one configurable library, while keeping
-            your data and access rules under your control.
+            Authlier provides email and password authentication, session
+            management, MFA, passkeys, OAuth, and SSO through OIDC and SAML.
+            Configure the methods your application needs, connect Authlier to
+            your database, and mount its HTTP handler in your Go server.
           </p>
         </div>
       </section>

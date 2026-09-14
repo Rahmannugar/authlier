@@ -4,11 +4,24 @@ description: Use Redis as Authlier's database or as a session cache.
 icon: Database
 ---
 
-Redis has two separate roles in Authlier. `redis.New` creates a complete primary
-database adapter. `redis.NewSessionCache` adds a cache in front of another
-durable session store.
+Redis can serve two separate roles. Choose `redis.New` when Redis will hold all
+Authlier records as the primary database. Choose `redis.NewSessionCache` when
+PostgreSQL, MySQL, MongoDB, or another adapter remains the database and Redis
+only speeds up cookie-session lookup.
+
+These roles are independent; using Redis does not mean it is only a session
+cache. Supported versions are Redis 7.4 and 8.
 
 ## Redis as the database
+
+Install the adapter and driver:
+
+```bash
+go get github.com/Rahmannugar/authlier/storage/redis
+go get github.com/redis/go-redis/v9
+```
+
+Create the client, adapter, and Authlier instance when the Go server starts:
 
 ```go
 client := redis.NewClient(&redis.Options{Addr: "localhost:6379"})
@@ -37,7 +50,8 @@ if err != nil {
 }
 ```
 
-`Migrate` verifies the Redis connection. The adapter uses a shared hash tag in
+Pass `database` as the one and only `Config.Database`; application code does
+not pass the individual stores. `Migrate` verifies the Redis connection. The adapter uses a shared hash tag in
 its keys so related operations can remain in one Redis Cluster slot.
 
 When Redis is the only database, configure persistence, replication, backups,
@@ -60,9 +74,12 @@ Session: authlier.SessionConfig{
 },
 ```
 
-The database remains authoritative. A cache miss or cache error falls back to
+This cache works only with cookie sessions. The database remains authoritative. A cache miss or cache error falls back to
 the database, while revocation updates the database before removing cached
 state.
 
-Supported versions: Redis 7.4 and 8. Supply a `redis.SecretCodec` when using
-Redis as the primary database with TOTP.
+## Enable TOTP encryption
+
+When Redis is the primary database and TOTP is enabled, pass your
+`redis.SecretCodec` as `authlierredis.Config{Secrets: secretCodec}`. A Redis
+instance used only as a session cache does not store TOTP secrets.

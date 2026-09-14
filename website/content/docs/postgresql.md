@@ -4,14 +4,24 @@ description: Use PostgreSQL as Authlier's database.
 icon: Database
 ---
 
-Install the adapter and pgx:
+This page replaces the database step in [Getting started](/docs/getting-started)
+with the complete PostgreSQL setup. The resulting adapter is passed directly to
+`authlier.Config.Database`.
+
+Supported versions: PostgreSQL 17 and 18.
+
+## Install the adapter
 
 ```bash
 go get github.com/Rahmannugar/authlier/storage/postgres
 go get github.com/jackc/pgx/v5
 ```
 
-Create a connection pool, then pass the adapter to Authlier:
+## Connect, migrate, and configure Authlier
+
+Create one connection pool when the Go server starts. Build the Authlier
+adapter around that pool, run its migrations, and pass the same adapter to
+Authlier:
 
 ```go
 pool, err := pgxpool.New(ctx, os.Getenv("DATABASE_URL"))
@@ -41,13 +51,26 @@ if err != nil {
 }
 ```
 
+Keep the pool open for the lifetime of the server and close it during graceful
+shutdown.
+
+## What migration does
+
 `Migrate` creates a small migration ledger and the complete Authlier schema.
 The schema includes empty tables for disabled authentication methods so enabling
 a method later does not require choosing another migration set. Already applied
 migrations are skipped.
 
-Supported versions: PostgreSQL 17 and 18.
+## Enable TOTP encryption
 
-When TOTP is enabled, provide a `postgres.SecretCodec` through
-`postgres.Config.Secrets` so authenticator secrets are encrypted before they
-reach the database.
+When TOTP is enabled, pass your `postgres.SecretCodec` to the adapter so
+authenticator secrets are encrypted before they reach PostgreSQL:
+
+```go
+database, err := postgres.New(pool, postgres.Config{
+	Secrets: secretCodec,
+})
+```
+
+The codec and its encryption keys belong to the application. See
+[Storage](/docs/storage#encrypt-totp-secrets).

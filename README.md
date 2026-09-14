@@ -59,8 +59,8 @@ builds a working server and explains each part of this setup.
   to Authlier's routes.
 - [Configuration](website/content/docs/configuration.md) covers route prefixes,
   browser origins, session modes, and authentication methods.
-- [Bearer tokens](website/content/docs/bearer-tokens.md) covers mobile, CLI, and
-  API clients that cannot use browser cookies.
+- [Bearer tokens](website/content/docs/bearer-tokens.md) covers web, mobile,
+  CLI, and API clients that choose access and refresh tokens.
 - [Storage](website/content/docs/storage.md) explains the official database
   adapters and custom storage contracts.
 - [Authentication guides](website/content/docs/email-password.md) begin with

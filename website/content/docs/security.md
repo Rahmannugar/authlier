@@ -35,8 +35,10 @@ responses.
 
 In bearer mode, keep the Ed25519 private key in server secret storage and use a
 distinct `KeyID` when rotating it. Native clients should keep refresh tokens in
-the operating system's protected credential storage. Do not put refresh tokens
-in browser local storage, URLs, logs, analytics, or crash reports.
+the operating system's protected credential storage. A browser application
+using bearer mode must account for script injection and should avoid persistent
+JavaScript-readable refresh-token storage where possible. Never put refresh
+tokens in URLs, logs, analytics, or crash reports.
 
 Bearer access tokens are short-lived, but Authlier also checks their durable
 session on every request. Preserve that check by using `ResolveSession` rather

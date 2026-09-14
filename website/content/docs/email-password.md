@@ -4,7 +4,14 @@ description: Configure sign-up, sign-in, and password credential management.
 icon: Key
 ---
 
-Enable email and password authentication in the root configuration:
+Email and password authentication gives the client routes to create an account,
+sign in, and manage the account's password. A successful sign-up or sign-in
+creates the session configured by your Go server.
+
+## Configure the Go server
+
+Enable the method in the same root configuration that contains `BaseURL` and
+`Database`:
 
 ```go
 EmailAndPassword: authlier.EmailAndPasswordConfig{
@@ -12,10 +19,10 @@ EmailAndPassword: authlier.EmailAndPasswordConfig{
 },
 ```
 
-Authlier normalizes email addresses and hashes new passwords securely. The
-password package uses Argon2id by default and also supports bcrypt when an
-application needs compatibility with existing hashes. After a successful
-sign-in, Authlier can replace an older supported hash with the current format.
+Authlier normalizes email addresses and hashes new passwords securely. New
+passwords use Argon2id by default. Existing bcrypt hashes can also be verified
+when an application is migrating accounts, and a successful sign-in can replace
+an older supported hash with the current format.
 
 ## Sign up and sign in
 
@@ -33,8 +40,10 @@ Content-Type: application/json
 {"email":"person@example.com","password":"correct horse battery staple"}
 ```
 
-Successful authentication creates a session unless verified email or TOTP adds
-another required step.
+The client sends these requests to the Authlier handler mounted in your Go
+server. Successful authentication creates a cookie or bearer session according
+to `Session.Mode`. Required email verification may pause sign-in, and TOTP may
+return a second-factor challenge instead of the completed session.
 
 ## Password rules
 
@@ -76,5 +85,7 @@ An account created through another method can add a password with
 Removing a password uses `POST /api/auth/remove-password` and cannot remove the
 account's last sign-in method.
 
-Add [email verification](/docs/email-verification) and
-[password recovery](/docs/password-recovery) for a complete password flow.
+For a production password flow, continue with
+[Email verification](/docs/email-verification) and
+[Password recovery](/docs/password-recovery). [HTTP routes](/docs/http-routes)
+contains the complete request and response reference.

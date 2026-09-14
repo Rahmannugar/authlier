@@ -6,9 +6,9 @@
     "getting-started",
     "basic-usage",
     "configuration",
+    "bearer-tokens",
     "---Core concepts---",
     "sessions",
-    "bearer-tokens",
     "storage",
     "postgresql",
     "mysql",
@@ -32,6 +32,7 @@
     "http-routes",
     "security",
     "references",
-    "lower-level-packages"
+    "lower-level-packages",
+    "contributing"
   ]
 }

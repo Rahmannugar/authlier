@@ -1,11 +1,26 @@
 ---
 title: Configuration
-description: Configure Authlier and enable the authentication methods your application uses.
+description: Configure Authlier's server URL, routes, client origins, sessions, and sign-in methods.
 icon: Gear
 ---
 
-Create one `authlier.Config` when the application starts. `AppName`, `BaseURL`,
-`Database`, and at least one sign-in method are required.
+Create one `authlier.Config` when your Go server starts. Authlier validates the
+configuration and returns an error before the server begins accepting requests
+when required settings are missing or incompatible.
+
+## Required configuration
+
+A working configuration needs four decisions:
+
+| Setting | What to provide |
+| --- | --- |
+| `AppName` | The product name that authentication features may show to users. |
+| `BaseURL` | The public `http` or `https` origin of the Go server receiving Authlier requests. Do not include a path. |
+| `Database` | An official adapter or your own implementation of `authlier.Database`. |
+| Sign-in method | Enable at least one of email and password, Google, passkeys, OIDC, or SAML. |
+
+This is a complete email and password configuration using the default cookie
+session and `/api/auth` route prefix:
 
 ```go
 auth, err := authlier.New(authlier.Config{
@@ -16,31 +31,32 @@ auth, err := authlier.New(authlier.Config{
 		Enabled: true,
 	},
 })
+if err != nil {
+	log.Fatal(err)
+}
+
+http.Handle("/api/auth/", auth.Handler())
 ```
 
-`BaseURL` is the public origin that receives Authlier requests. Authlier uses
-its scheme to decide whether the session cookie must be Secure.
+`BaseURL` describes where the Go server is publicly reachable. The path passed
+to `http.Handle` decides where the handler is mounted inside that server.
 
 ## Route prefix
 
-Authlier does not force its routes to live at `/api/auth`. Choose the route
-prefix with `BasePath`, then mount `auth.Handler()` at that same path in your Go
-server.
-
-The default is `/api/auth`. For a server at `server.example.com`, email sign-in
-is available at:
+Authlier's default `BasePath` is `/api/auth`, so the configuration above creates
+routes such as:
 
 ```text
 https://server.example.com/api/auth/sign-in/email
 ```
 
-If that server already uses an `api` subdomain, you may prefer `/auth` so the
-URL does not repeat `api`:
+Set `BasePath` when a different prefix fits the server better. For example, an
+API subdomain may use `/auth` to avoid repeating `api` in the URL:
 
 ```go
 auth, err := authlier.New(authlier.Config{
 	AppName:  "Acme",
-	BaseURL:  "https://server.example.com",
+	BaseURL:  "https://api.example.com",
 	BasePath: "/auth",
 	Database: database,
 	EmailAndPassword: authlier.EmailAndPasswordConfig{
@@ -51,19 +67,19 @@ auth, err := authlier.New(authlier.Config{
 http.Handle("/auth/", auth.Handler())
 ```
 
-The routes now begin with `https://server.example.com/auth`. `BasePath` changes
-the Authlier route prefix; it does not change your server's domain.
+Email sign-in is now
+`https://api.example.com/auth/sign-in/email`. `BasePath` must begin with `/`
+and must not end with `/`. Mount the handler at the same prefix. The trailing
+slash in `http.Handle("/auth/", ...)` is Go's subtree-matching syntax; it is not
+part of `BasePath`.
 
-`BasePath` must start with `/` and must not end with `/`. The path passed to
-`http.Handle` ends with `/` because Go uses that trailing slash to match every
-Authlier route beneath the prefix. `http.Handle` and `http.NewServeMux` are both
-part of Go's standard `net/http` package; Authlier does not require a third-party
-router.
+The examples use Go's standard `net/http` package, not a third-party mux. Any
+router that accepts an `http.Handler` can mount the same Authlier handler.
 
 ## Browser origins
 
-Authlier accepts browser requests from `BaseURL`. If the browser client is
-served from another origin, add that client origin:
+`BaseURL` is trusted automatically. Add `TrustedOrigins` only for browser
+clients served from another origin:
 
 ```go
 TrustedOrigins: []string{
@@ -71,20 +87,62 @@ TrustedOrigins: []string{
 },
 ```
 
-For browser requests, the browser creates the `Origin` header automatically.
-Your frontend does not set `Access-Control-Allow-Origin`; Authlier adds that
-response header after it recognizes the origin. Cookie mode rejects POST
-requests whose origin is missing or untrusted, which protects the session
-cookie from cross-site requests.
+For example, this setting lets a frontend at `client.example.com` call Authlier
+on `server.example.com`. The browser sends the `Origin` request header.
+Authlier compares it with this list and, when allowed, writes the required CORS
+response headers.
 
-Native clients do not send browser origin headers. Bearer mode therefore accepts
-a request without `Origin`, but still rejects an untrusted origin when a browser
-does send one. See [Bearer tokens](/docs/bearer-tokens).
+Frontend code does not set an origin as trusted. It only uses the Go server URL
+and, in cookie mode, includes credentials in cross-origin requests:
 
-## Sessions
+```ts
+fetch('https://server.example.com/api/auth/session', {
+  credentials: 'include',
+});
+```
 
-Sessions last seven days by default. The default cookie is named
-`authlier_session`, uses `/` as its path, and uses `SameSite=Lax`.
+Cookie mode rejects state-changing requests without a trusted `Origin`. Bearer
+mode permits requests without `Origin` because native and server clients do not
+send browser origin headers, but it still rejects an explicitly untrusted
+browser origin.
+
+## Choose a session mode
+
+Cookie mode is the default:
+
+```go
+Session: authlier.SessionConfig{
+	Mode: authlier.SessionModeCookie,
+},
+```
+
+Authlier stores the raw session token in an HttpOnly cookie and only its hash in
+the database. This is usually the simplest browser setup because frontend
+JavaScript never receives the credential.
+
+Bearer mode returns an access token and rotating refresh token in the JSON
+authentication response:
+
+```go
+Session: authlier.SessionConfig{
+	Mode: authlier.SessionModeBearer,
+	Bearer: authlier.BearerSessionConfig{
+		Audience:   "acme-api",
+		KeyID:      "2026-09",
+		PrivateKey: privateKey,
+	},
+},
+```
+
+Web, mobile, CLI, and server clients may all use bearer mode. The application
+chooses it when the client needs direct control of credentials. Read
+[Bearer tokens](/docs/bearer-tokens) for key generation, token storage,
+refresh, revocation, and current provider-flow limits.
+
+## Configure cookie sessions
+
+Cookie sessions last seven days by default. The default cookie is named
+`authlier_session`, uses path `/`, and uses `SameSite=Lax`:
 
 ```go
 Session: authlier.SessionConfig{
@@ -96,12 +154,14 @@ Session: authlier.SessionConfig{
 },
 ```
 
-See [Sessions](/docs/sessions) before enabling session extension or a Redis
-cache.
+Authlier automatically makes the cookie `HttpOnly` and makes it `Secure` when
+`BaseURL` uses HTTPS. Read [Sessions](/docs/sessions) before adding session
+extension or a Redis cache.
 
-## Optional authentication methods
+## Enable authentication methods
 
-Each method is disabled until its `Enabled` field is true:
+Authentication methods are opt-in. A method contributes its HTTP routes only
+when enabled:
 
 ```go
 EmailAndPassword:  authlier.EmailAndPasswordConfig{Enabled: true},
@@ -114,5 +174,24 @@ OIDC:              authlier.OIDCConfig{Enabled: true},
 SAML:              authlier.SAMLConfig{Enabled: true},
 ```
 
-Some methods require more settings. Their guides show the complete
-configuration rather than listing every field here.
+Enabling a method is only the first field for features that need email delivery,
+provider credentials, WebAuthn settings, or organization connections. Each
+authentication guide explains what the application must provide and shows a
+complete configuration.
+
+## Trusted proxies
+
+Authlier uses a request source key for attempt guards and security events. Add
+`TrustedProxies` only when the Go server is behind a proxy that you operate and
+the proxy sets the forwarding headers Authlier reads:
+
+```go
+TrustedProxies: []string{"10.0.0.0/8"},
+```
+
+Do not trust every address. An untrusted client must not be allowed to choose
+the IP address used by rate limits or security records.
+
+The next page, [Bearer tokens](/docs/bearer-tokens), explains bearer-specific
+fields. Otherwise continue to [Sessions](/docs/sessions) or choose an
+authentication method from the sidebar.

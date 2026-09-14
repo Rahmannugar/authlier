@@ -1,19 +1,80 @@
 ---
 title: Basic usage
-description: Connect a browser client to Authlier's HTTP routes.
+description: Call Authlier from a browser and use sessions in your Go server.
 icon: Browser
 ---
 
-Authlier runs inside your Go server. The browser client calls its mounted
-authentication routes. Authlier replies with JSON or redirects the browser to
-an identity provider when required.
+This guide continues from the Go server created in
+[Getting started](/docs/getting-started). That server mounted Authlier at
+`/api/auth` and enabled cookie sessions with email and password sign-in.
 
-The examples below assume the default `/api/auth` base path.
+There are two kinds of routes in that server:
+
+- The browser calls Authlier routes such as `/api/auth/sign-in/email` to create,
+  inspect, and end a session.
+- The browser calls your application routes for the product itself. Those Go
+  handlers use `auth.ResolveSession(request)` when they need an authenticated
+  user.
+
+The examples below are browser client code written in TypeScript. The same HTTP
+requests can be made with plain JavaScript or another frontend framework.
+
+## Choose the server URL
+
+If the browser client and Go server share an origin, use relative URLs:
+
+```ts
+const serverURL = '';
+```
+
+If the frontend is served from `https://client.example.com` and the Go server
+is `https://server.example.com`, use the full server origin:
+
+```ts
+const serverURL = 'https://server.example.com';
+```
+
+The separate-origin setup also requires `TrustedOrigins` in the Go server. The
+next section shows that configuration.
+
+## Configure a separate browser origin
+
+Skip this section when the frontend and Go server share an origin. Otherwise,
+add the frontend origin when creating Authlier:
+
+```go
+auth, err := authlier.New(authlier.Config{
+	AppName:        "Acme",
+	BaseURL:        "https://server.example.com",
+	TrustedOrigins: []string{"https://client.example.com"},
+	Database:       database,
+	EmailAndPassword: authlier.EmailAndPasswordConfig{
+		Enabled: true,
+	},
+})
+```
+
+The browser creates the `Origin` request header. Frontend code does not decide
+which origins are trusted and should not try to set
+`Access-Control-Allow-Origin`; Authlier sends that response header only after
+the request origin matches `TrustedOrigins`.
+
+Cookie requests across origins must also set `credentials: 'include'`. The
+small helper below applies that option to every example:
+
+```ts
+function authRequest(path: string, init: RequestInit = {}) {
+  return fetch(`${serverURL}/api/auth${path}`, {
+    ...init,
+    credentials: 'include',
+  });
+}
+```
 
 ## Create an account
 
 ```ts
-const response = await fetch('/api/auth/sign-up/email', {
+const response = await authRequest('/sign-up/email', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({
@@ -27,61 +88,77 @@ if (!response.ok) {
   throw new Error(error.code);
 }
 
-const { user } = await response.json();
+const { user, session } = await response.json();
 ```
 
-On success, Authlier sets an HttpOnly session cookie. Browser JavaScript cannot
-read that cookie, which is intentional. The browser sends it automatically on
-later same-origin requests.
+In cookie mode, Authlier sets an HttpOnly session cookie. Browser JavaScript
+cannot read the raw credential, but the browser sends it with later requests
+to the Go server.
 
 ## Sign in
 
 ```ts
-const response = await fetch('/api/auth/sign-in/email', {
+const response = await authRequest('/sign-in/email', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({ email, password }),
 });
 ```
 
-If TOTP is enabled for the account, this route returns a short-lived challenge
-instead of creating a session. See [TOTP](/docs/totp) for the second step.
+A successful sign-in replaces the browser's Authlier session cookie. If the
+account has TOTP enabled, the response contains a short-lived challenge instead
+of a completed session. [TOTP](/docs/totp) explains that second step.
 
-## Read the session
+## Read the current session
+
+The browser can ask Authlier for the current session:
 
 ```ts
-const response = await fetch('/api/auth/session');
+const response = await authRequest('/session');
 
 if (response.status === 401) {
-  // Show the signed-out state.
+  // Render the signed-out state.
 } else {
   const { session } = await response.json();
   console.log(session.subjectId);
 }
 ```
 
-Server-side Go handlers should call `auth.ResolveSession(request)` directly.
-See [Sessions](/docs/sessions).
+This route is useful for initializing frontend state. It does not replace the
+server-side check on a protected application route.
+
+## Protect your own server routes
+
+Inside a Go handler, resolve the session before returning private application
+data:
+
+```go
+http.HandleFunc("GET /account", func(response http.ResponseWriter, request *http.Request) {
+	session, err := auth.ResolveSession(request)
+	if err != nil {
+		http.Error(response, "not authenticated", http.StatusUnauthorized)
+		return
+	}
+
+	profile, err := profiles.FindByAuthlierSubject(request.Context(), session.SubjectID)
+	// Handle err, then write the application response.
+})
+```
+
+Authlier answers which subject authenticated. Your application decides which
+profile that ID belongs to and what the user may access.
 
 ## Sign out
 
 ```ts
-await fetch('/api/auth/sign-out', { method: 'POST' });
+await authRequest('/sign-out', { method: 'POST' });
 ```
 
-For a browser client on another origin, add the client origin to
-`TrustedOrigins` and use `credentials: 'include'` in each request. The browser
-adds the `Origin` request header itself; frontend code cannot declare an origin
-trusted. Authlier checks that header and sends the response headers that allow
-the browser to receive the result. See
-[Configuration](/docs/configuration#browser-origins).
-
-Mobile, CLI, and server-to-server clients should use
-[bearer-token sessions](/docs/bearer-tokens) instead of browser cookies.
+Authlier revokes the durable session and expires the cookie.
 
 ## Handle errors
 
-Errors use one stable JSON shape:
+Authlier errors use one JSON shape:
 
 ```json
 {
@@ -91,5 +168,11 @@ Errors use one stable JSON shape:
 }
 ```
 
-Use the code to choose the interface state. Do not show raw server errors to
-the user. The complete list is in [HTTP routes](/docs/http-routes).
+Use `error.code` to choose the client state or message. Do not expose internal
+server errors. [HTTP routes](/docs/http-routes) lists the routes, request
+bodies, success responses, and error codes.
+
+This guide used cookie sessions, which are the usual browser default. A web
+application may instead choose access and refresh tokens, just like a mobile,
+CLI, or server client. Read [Configuration](/docs/configuration) first, then
+[Bearer tokens](/docs/bearer-tokens) for that setup.
