@@ -13,23 +13,154 @@ jobs:
     name: Test, vet, and build
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Set up Go
-        uses: actions/setup-go@v6
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
         with:
           go-version-file: go.mod
           cache: true
-
       - name: Verify formatting
         run: test -z "$(gofmt -l .)"
-
       - name: Test
         run: go test ./...
-
       - name: Vet
         run: go vet ./...
-
       - name: Build
         run: go build ./...
+
+  documentation:
+    name: Documentation
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: website
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+      - name: Install dependencies
+        run: bun ci
+      - name: Keep the website secondary to Go
+        working-directory: .
+        run: |
+          go_lines=$(find . -type f -name '*.go' -not -path './.git/*' -not -path '*/vendor/*' -not -path '*/node_modules/*' -print0 | xargs -0 cat | wc -l)
+          typescript_lines=$(find website -type f \( -name '*.ts' -o -name '*.tsx' \) -not -name 'next-env.d.ts' -not -path '*/node_modules/*' -not -path '*/.next/*' -not -path '*/.source/*' -print0 | xargs -0 cat | wc -l)
+          test "$typescript_lines" -lt "$go_lines"
+      - name: Lint
+        run: bun run lint
+      - name: Typecheck
+        run: bun run types:check
+      - name: Build
+        run: bun run build
+
+  postgres:
+    name: PostgreSQL ${{ matrix.version }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        version: [17, 18]
+    services:
+      database:
+        image: postgres:${{ matrix.version }}
+        env:
+          POSTGRES_DB: authlier_test
+          POSTGRES_PASSWORD: authlier_test
+          POSTGRES_USER: authlier_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U authlier_test -d authlier_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      AUTHLIER_POSTGRES_TEST_DSN: postgres://authlier_test:authlier_test@localhost:5432/authlier_test?sslmode=disable
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go test -race ./storage/postgres
+
+  mysql:
+    name: MySQL ${{ matrix.version }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        version: [8.4, 9]
+    services:
+      database:
+        image: mysql:${{ matrix.version }}
+        env:
+          MYSQL_DATABASE: authlier_test
+          MYSQL_PASSWORD: authlier_test
+          MYSQL_ROOT_PASSWORD: authlier_root
+          MYSQL_USER: authlier_test
+        ports:
+          - 3306:3306
+        options: >-
+          --health-cmd "mysqladmin ping -h 127.0.0.1 -u root -pauthlier_root"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      AUTHLIER_MYSQL_TEST_DSN: authlier_test:authlier_test@tcp(127.0.0.1:3306)/authlier_test?parseTime=true&loc=UTC
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go test -race ./storage/mysql
+
+  mongodb:
+    name: MongoDB ${{ matrix.mongodb }}
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        mongodb: [7, 8]
+    env:
+      AUTHLIER_MONGODB_TEST_URI: mongodb://localhost:27017/?replicaSet=rs0&directConnection=true
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Start MongoDB replica set
+        run: |
+          docker run --detach --name authlier-mongodb --publish 27017:27017 \
+            mongo:${{ matrix.mongodb }} --replSet rs0 --bind_ip_all
+          timeout 60 bash -c 'until docker exec authlier-mongodb mongosh --quiet --eval "db.adminCommand({ping:1}).ok"; do sleep 1; done'
+          docker exec authlier-mongodb mongosh --quiet --eval \
+            'rs.initiate({_id:"rs0",members:[{_id:0,host:"localhost:27017"}]})'
+          timeout 60 bash -c 'until docker exec authlier-mongodb mongosh --quiet --eval "quit(rs.status().myState === 1 ? 0 : 1)"; do sleep 1; done'
+      - run: go test -race ./storage/mongodb
+
+  redis:
+    name: Redis ${{ matrix.version }}
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        version: [7.4, 8]
+    services:
+      database:
+        image: redis:${{ matrix.version }}
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      AUTHLIER_REDIS_TEST_ADDRESS: localhost:6379
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - run: go test -race ./storage/redis

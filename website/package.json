@@ -1,0 +1,33 @@
+{
+  "name": "authlier-docs",
+  "version": "0.0.0",
+  "private": true,
+  "scripts": {
+    "build": "next build",
+    "dev": "next dev",
+    "format": "biome check --write .",
+    "lint": "biome check .",
+    "start": "next start",
+    "types:check": "next typegen && tsc --noEmit"
+  },
+  "dependencies": {
+    "@phosphor-icons/react": "2.1.10",
+    "fumadocs-core": "16.15.10",
+    "fumadocs-mdx": "15.4.0",
+    "fumadocs-ui": "npm:@fumadocs/base-ui@16.15.10",
+    "next": "16.3.4",
+    "react": "19.2.8",
+    "react-dom": "19.2.8"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.5.13",
+    "@tailwindcss/postcss": "4.3.3",
+    "@types/mdx": "2.0.14",
+    "@types/node": "26.5.0",
+    "@types/react": "19.2.18",
+    "@types/react-dom": "19.2.7",
+    "postcss": "8.5.28",
+    "tailwindcss": "4.3.3",
+    "typescript": "6.0.3"
+  }
+}

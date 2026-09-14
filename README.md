@@ -1,8 +1,13 @@
 # Authlier
 
-Authlier is an authentication library for Go applications. It provides secure,
-composable authentication capabilities without binding an application to an
-HTTP framework, database, cache, mail service, or authorization model.
+Authlier is a composable authentication library for Go applications. It brings
+passwords, sessions, email verification and recovery, MFA, passkeys, Google
+authentication, OIDC, and SAML into your Go server through one configurable
+HTTP handler.
+
+Authlier verifies identities and manages authentication records. Your
+application keeps control of profiles, roles, permissions, and other product
+data.
 
 ## Installation
 
@@ -10,47 +15,74 @@ HTTP framework, database, cache, mail service, or authorization model.
 go get github.com/Rahmannugar/authlier
 ```
 
-## Passwords
+## How it works
 
-The password package supports Argon2id and bcrypt. Argon2id is the default.
-Stored hashes are self-describing, use algorithm-appropriate secure parameters,
-and can be verified without separately storing the selected algorithm.
-Verification reports when a matching hash should be replaced with the preferred
-algorithm or current work factor.
+1. Connect one of the official PostgreSQL, MySQL, MongoDB, or Redis adapters.
+2. Enable the authentication methods your application needs.
+3. Mount `auth.Handler()` in your Go server.
+4. Call `auth.ResolveSession(request)` from application routes that require an
+   authenticated user.
+
+With a connected `pgxpool.Pool`, a PostgreSQL setup looks like this:
 
 ```go
-encodedHash, err := password.Hash(plainPassword)
+database, err := postgres.New(pool, postgres.Config{})
+if err != nil {
+	return err
+}
+if err := database.Migrate(ctx); err != nil {
+	return err
+}
+
+auth, err := authlier.New(authlier.Config{
+	AppName:  "Acme",
+	BaseURL:  "https://server.example.com",
+	Database: database,
+	EmailAndPassword: authlier.EmailAndPasswordConfig{
+		Enabled: true,
+	},
+})
 if err != nil {
 	return err
 }
 
-verification, err := password.Verify(plainPassword, encodedHash)
-if err != nil {
-	return err
-}
-if !verification.Matches {
-	return errors.New("invalid credentials")
-}
+mux := http.NewServeMux()
+mux.Handle("/api/auth/", auth.Handler())
 ```
 
-Applications that require bcrypt can select it explicitly:
+The complete [Getting started](website/content/docs/getting-started.md) guide
+builds a working server and explains each part of this setup.
 
-```go
-encodedHash, err := password.HashWithAlgorithm(plainPassword, password.Bcrypt)
-verification, err := password.VerifyWithAlgorithm(
-	plainPassword,
-	encodedHash,
-	password.Bcrypt,
-)
-```
+## Documentation
 
-Applications remain responsible for password policy. Passwords and password
-hashes must never be logged.
+- [Basic usage](website/content/docs/basic-usage.md) connects a browser client
+  to Authlier's routes.
+- [Configuration](website/content/docs/configuration.md) covers route prefixes,
+  browser origins, session modes, and authentication methods.
+- [Bearer tokens](website/content/docs/bearer-tokens.md) covers web, mobile,
+  CLI, and API clients that choose access and refresh tokens.
+- [Storage](website/content/docs/storage.md) explains the official database
+  adapters and custom storage contracts.
+- [Authentication guides](website/content/docs/email-password.md) begin with
+  email and password, then cover verification, recovery, Google, TOTP, and
+  passkeys.
+- [Single sign-on](website/content/docs/sso.md) explains the shared OIDC and
+  SAML identity boundary.
+- [HTTP routes](website/content/docs/http-routes.md) lists the request and
+  response contract for the configured handler.
+- [Security](website/content/docs/security.md) explains secure deployment and
+  the controls that remain the application's responsibility.
+- [Architecture](ARCHITECTURE.md) describes the internal package boundaries.
 
 ## Security
 
 Security reports should be submitted privately according to
 [`SECURITY.md`](SECURITY.md).
+
+## Contributing
+
+See [`CONTRIBUTING.md`](CONTRIBUTING.md) to report an issue, propose a change,
+or open a pull request.
 
 ## License
 

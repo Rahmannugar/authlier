@@ -1,0 +1,47 @@
+---
+title: Authlier
+description: Composable authentication for Go applications.
+icon: BookOpen
+---
+
+Authlier is a composable authentication library that runs inside your Go
+server. It provides the server-side flows for passwords, sessions, email
+verification and recovery, TOTP, passkeys, Google authentication, OIDC, and
+SAML SSO.
+
+Your Go server configures Authlier once, gives it a database adapter, and mounts
+its `http.Handler`. A browser, mobile application, CLI, or another server then
+calls the enabled authentication routes. Your application keeps control of its
+profiles, business data, roles, and permissions.
+
+## How it fits into an application
+
+<AuthFlow />
+
+The client sends an authentication request to your Go server. The Authlier
+handler verifies the credential or provider response, writes the required
+authentication records through the configured database adapter, and creates a
+session.
+
+The application chooses how that session reaches the client: an HttpOnly cookie
+or an access-and-refresh-token pair. Cookie sessions are the usual browser
+default, while bearer tokens are available to browsers, mobile applications,
+command-line tools, and server clients. Your own Go handlers resolve either
+credential to a stable Authlier subject ID, then use that ID to load application
+data and enforce application permissions.
+
+## Included authentication methods
+
+| Authentication method | What it provides |
+| --- | --- |
+| Email and password | Sign-up, sign-in, password changes, and secure password hashing |
+| Email verification and recovery | Email ownership verification and password reset flows |
+| Google | Google sign-in and account linking |
+| TOTP | Authenticator-app verification and recovery codes |
+| Passkeys | WebAuthn registration and passwordless sign-in |
+| OIDC and SAML | Single sign-on with organization identity providers |
+
+Start with [Getting started](/docs/getting-started) for a complete working Go
+server. [Basic usage](/docs/basic-usage) continues with browser client code,
+and [Configuration](/docs/configuration) explains every top-level choice before
+the individual feature guides.
