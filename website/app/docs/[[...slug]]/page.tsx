@@ -6,7 +6,9 @@ import {
 } from 'fumadocs-ui/layouts/docs/page';
 import type { Metadata } from 'next';
 import { notFound } from 'next/navigation';
+import { GitHubStars } from '@/components/github-stars';
 import { getMDXComponents } from '@/components/mdx';
+import { getGitHubStarCount } from '@/lib/github';
 import { source } from '@/lib/source';
 
 export default async function DocumentationPage({
@@ -17,11 +19,15 @@ export default async function DocumentationPage({
   if (!page) notFound();
 
   const Content = page.data.body;
+  const starCount = slug ? null : await getGitHubStarCount();
 
   return (
     <DocsPage toc={page.data.toc} full={page.data.full}>
       <DocsTitle>{page.data.title}</DocsTitle>
       <DocsDescription>{page.data.description}</DocsDescription>
+      {!slug ? (
+        <GitHubStars className="docs-github-stars" starCount={starCount} />
+      ) : null}
       <DocsBody>
         <Content components={getMDXComponents()} />
       </DocsBody>

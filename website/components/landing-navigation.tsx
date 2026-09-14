@@ -1,11 +1,16 @@
 'use client';
 
-import { GithubLogoIcon, ListIcon, XIcon } from '@phosphor-icons/react';
+import { ListIcon, XIcon } from '@phosphor-icons/react';
 import Image from 'next/image';
 import Link from 'next/link';
 import { useEffect, useState } from 'react';
+import { GitHubStars } from '@/components/github-stars';
 
-export function LandingNavigation() {
+type LandingNavigationProps = {
+  starCount: number | null;
+};
+
+export function LandingNavigation({ starCount }: LandingNavigationProps) {
   const [menuOpen, setMenuOpen] = useState(false);
 
   useEffect(() => {
@@ -42,10 +47,7 @@ export function LandingNavigation() {
         </Link>
 
         <div className="landing-nav__links">
-          <a href="https://github.com/Rahmannugar/authlier">
-            <GithubLogoIcon size={19} weight="bold" aria-hidden="true" />
-            GitHub
-          </a>
+          <GitHubStars className="landing-nav__github" starCount={starCount} />
           <Link className="landing-nav__docs" href="/docs/getting-started">
             Get started
           </Link>
@@ -75,13 +77,10 @@ export function LandingNavigation() {
         >
           Get started
         </Link>
-        <a
+        <GitHubStars
           className="landing-mobile-menu__github"
-          href="https://github.com/Rahmannugar/authlier"
-        >
-          <GithubLogoIcon size={22} weight="bold" aria-hidden="true" />
-          GitHub
-        </a>
+          starCount={starCount}
+        />
       </div>
     </header>
   );
