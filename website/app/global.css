@@ -564,7 +564,9 @@ h6 {
 
 .docs-github-stars {
   display: inline-flex;
+  width: fit-content;
   min-height: 38px;
+  align-self: flex-start;
   align-items: center;
   gap: 8px;
   margin-top: 18px;
