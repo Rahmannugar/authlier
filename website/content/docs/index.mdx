@@ -1,0 +1,40 @@
+---
+title: Authlier
+description: Composable authentication for Go applications.
+icon: BookOpen
+---
+
+Authlier is a composable authentication library that runs inside your Go
+server. It provides the server-side flows for passwords, sessions, email
+verification and recovery, TOTP, passkeys, Google authentication, OIDC, and
+SAML SSO.
+
+Configure the sign-in methods your application needs, connect an official
+storage adapter, and mount one `http.Handler`. Authentication data stays in the
+database you configure. Your application keeps control of profiles, roles, and
+permissions.
+
+## How it fits into an application
+
+<AuthFlow />
+
+The browser client sends authentication requests to your Go server. The
+Authlier handler verifies them, writes the necessary records through your
+storage adapter, and returns an HttpOnly session cookie. On later application
+requests, your Go server resolves that session. Authlier returns the subject ID;
+your application uses it to load its own user data and enforce its own roles and
+permissions.
+
+## Included authentication methods
+
+| Authentication method | What it provides |
+| --- | --- |
+| Email and password | Sign-up, sign-in, password changes, and secure password hashing |
+| Email verification and recovery | Email ownership verification and password reset flows |
+| Google | Google sign-in and account linking |
+| TOTP | Authenticator-app verification and recovery codes |
+| Passkeys | WebAuthn registration and passwordless sign-in |
+| OIDC and SAML | Single sign-on with organization identity providers |
+
+Start with [Getting started](getting-started.md) for a complete working Go
+server. Then use [Basic usage](basic-usage.md) to connect a browser interface.

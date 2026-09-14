@@ -1,8 +1,19 @@
-# Storage
+---
+title: Storage
+description: Configure an official Authlier database adapter.
+icon: Database
+---
 
 Pass a supported database adapter to `authlier.Config`. The adapter stores
 users, credentials, sessions, and the temporary records used by enabled sign-in
 methods.
+
+Choose the database your application already operates:
+
+- [PostgreSQL](postgresql.md)
+- [MySQL](mysql.md)
+- [MongoDB](mongodb.md)
+- [Redis](redis.md), either as the primary database or as a session cache
 
 ## PostgreSQL
 
@@ -56,4 +67,5 @@ rather than raw values.
 Applications can support another database by implementing `authlier.Database`
 and the stores returned by `authlier.Stores`. Operations documented as atomic
 must remain atomic. For example, two requests must not consume the same reset
-token successfully.
+token successfully. See [Custom storage](custom-storage.md) before implementing
+an adapter.
