@@ -20,6 +20,8 @@ const (
 	Bcrypt   Algorithm = "bcrypt"
 
 	DefaultAlgorithm = Argon2id
+	// BcryptMaximumPasswordLength is bcrypt's password input limit in bytes.
+	BcryptMaximumPasswordLength = 72
 
 	argon2Version            = argon2.Version
 	argon2Memory      uint32 = 19 * 1024
@@ -97,8 +99,11 @@ func VerifyWithAlgorithm(
 		if err != nil {
 			return Verification{}, err
 		}
-		verification.NeedsRehash = verification.Matches &&
-			(preferredAlgorithm != Argon2id || verification.NeedsRehash)
+		// A compatibility selection may write bcrypt, but it must never downgrade
+		// an existing Argon2id credential after successful authentication.
+		if preferredAlgorithm == Bcrypt {
+			verification.NeedsRehash = false
+		}
 		return verification, nil
 	case Bcrypt:
 		return verifyBcrypt(plainPassword, encodedHash, preferredAlgorithm)

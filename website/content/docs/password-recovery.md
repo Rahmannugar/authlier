@@ -65,6 +65,10 @@ Reset tokens are expiring and single-use. By default, a successful reset
 revokes the account's existing sessions. Set `KeepSessionsAfterReset: true`
 only when the application deliberately accepts the weaker recovery behavior.
 
+The replacement password uses `EmailAndPassword.PasswordHashAlgorithm`, just
+like sign-up and password changes. The default is Argon2id. A bcrypt selection
+therefore applies to recovery as well and retains bcrypt's 72-byte input limit.
+
 By default the generated URL points to the Authlier handler on `BaseURL`. Set
 `ResetURL` when the email should open a page in your browser client. That page
 reads the token and sends the reset request shown above to your Go server; the

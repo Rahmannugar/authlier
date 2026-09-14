@@ -69,6 +69,21 @@ func TestDefaultVerificationRequestsMigrationFromBcrypt(t *testing.T) {
 	}
 }
 
+func TestBcryptPreferenceDoesNotDowngradeArgon2id(t *testing.T) {
+	encodedHash, err := password.Hash("password")
+	if err != nil {
+		t.Fatalf("hash password with Argon2id: %v", err)
+	}
+
+	verification, err := password.VerifyWithAlgorithm("password", encodedHash, password.Bcrypt)
+	if err != nil {
+		t.Fatalf("verify Argon2id password with bcrypt preference: %v", err)
+	}
+	if !verification.Matches || verification.NeedsRehash {
+		t.Fatalf("bcrypt preference requested an Argon2id downgrade: %+v", verification)
+	}
+}
+
 func TestBcryptRejectsPasswordsBeyondItsInputLimit(t *testing.T) {
 	_, err := password.HashWithAlgorithm(strings.Repeat("a", 73), password.Bcrypt)
 	if !errors.Is(err, password.ErrPasswordTooLong) {

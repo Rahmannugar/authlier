@@ -14,6 +14,7 @@ import (
 	"github.com/Rahmannugar/authlier/googleoauth"
 	"github.com/Rahmannugar/authlier/oidc"
 	"github.com/Rahmannugar/authlier/passkey"
+	passwordhash "github.com/Rahmannugar/authlier/password"
 	"github.com/Rahmannugar/authlier/passwordreset"
 	"github.com/Rahmannugar/authlier/saml"
 	"github.com/Rahmannugar/authlier/sessiontoken"
@@ -63,6 +64,21 @@ type Auth struct {
 	cookieName                    string
 }
 
+type configuredPasswords struct {
+	algorithm passwordhash.Algorithm
+}
+
+func (passwords configuredPasswords) Hash(plainPassword string) (string, error) {
+	return passwordhash.HashWithAlgorithm(plainPassword, passwords.algorithm)
+}
+
+func (passwords configuredPasswords) Verify(
+	plainPassword string,
+	encodedHash string,
+) (passwordhash.Verification, error) {
+	return passwordhash.VerifyWithAlgorithm(plainPassword, encodedHash, passwords.algorithm)
+}
+
 func New(config Config) (*Auth, error) {
 	applyConfigDefaults(&config)
 	if strings.TrimSpace(config.AppName) == "" || config.Database == nil {
@@ -82,6 +98,10 @@ func New(config Config) (*Auth, error) {
 	}
 	if config.PasswordReset.Enabled && !config.EmailAndPassword.Enabled {
 		return nil, fmt.Errorf("%w: password reset requires email and password authentication", ErrInvalidConfig)
+	}
+	if config.EmailAndPassword.PasswordHashAlgorithm != passwordhash.Argon2id &&
+		config.EmailAndPassword.PasswordHashAlgorithm != passwordhash.Bcrypt {
+		return nil, fmt.Errorf("%w: password hash algorithm must be argon2id or bcrypt", ErrInvalidConfig)
 	}
 	basePath := strings.TrimSpace(config.BasePath)
 	if basePath == "" {
@@ -104,14 +124,17 @@ func New(config Config) (*Auth, error) {
 		)
 	}
 	stores := config.Database.Stores()
+	passwordEngine := configuredPasswords{algorithm: config.EmailAndPassword.PasswordHashAlgorithm}
+	validatePassword := configuredPasswordValidator(config.EmailAndPassword)
 	var passwords *emailpassword.Manager
 	if config.EmailAndPassword.Enabled {
 		if stores.EmailPassword == nil {
 			return nil, fmt.Errorf("%w: database does not provide password storage", ErrInvalidConfig)
 		}
 		passwords, err = emailpassword.NewManager(stores.EmailPassword, emailpassword.Config{
+			Passwords:        passwordEngine,
 			Credentials:      stores.EmailPassword,
-			ValidatePassword: config.EmailAndPassword.ValidatePassword,
+			ValidatePassword: validatePassword,
 			AttemptGuard:     config.EmailAndPassword.AttemptGuard,
 			SecurityEvents:   config.EmailAndPassword.SecurityEvents,
 		})
@@ -335,7 +358,8 @@ func New(config Config) (*Auth, error) {
 		auth.passwordReset, err = passwordreset.NewManager(stores.PasswordReset, passwordreset.Config{
 			Lifetime:         config.PasswordReset.Lifetime,
 			Sender:           resetSender,
-			ValidatePassword: passwordreset.PasswordValidator(config.EmailAndPassword.ValidatePassword),
+			Passwords:        passwordEngine,
+			ValidatePassword: passwordreset.PasswordValidator(validatePassword),
 			AttemptGuard:     config.PasswordReset.AttemptGuard,
 			SecurityEvents:   config.PasswordReset.SecurityEvents,
 		})
@@ -351,7 +375,25 @@ func New(config Config) (*Auth, error) {
 	return auth, nil
 }
 
+func configuredPasswordValidator(config EmailAndPasswordConfig) emailpassword.PasswordValidator {
+	if config.PasswordHashAlgorithm != passwordhash.Bcrypt {
+		return config.ValidatePassword
+	}
+	return func(plainPassword string) error {
+		if len(plainPassword) > passwordhash.BcryptMaximumPasswordLength {
+			return passwordhash.ErrPasswordTooLong
+		}
+		if config.ValidatePassword != nil {
+			return config.ValidatePassword(plainPassword)
+		}
+		return nil
+	}
+}
+
 func applyConfigDefaults(config *Config) {
+	if config.EmailAndPassword.PasswordHashAlgorithm == "" {
+		config.EmailAndPassword.PasswordHashAlgorithm = passwordhash.DefaultAlgorithm
+	}
 	if config.Session.Mode == "" {
 		config.Session.Mode = SessionModeCookie
 	}
