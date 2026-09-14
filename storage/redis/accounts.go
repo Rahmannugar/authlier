@@ -5,6 +5,7 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
+	"slices"
 	"time"
 
 	"github.com/Rahmannugar/authlier/emailpassword"
@@ -487,6 +488,43 @@ func (store *GoogleStore) UnlinkIdentity(ctx context.Context, subjectID, provide
 		})
 		return err
 	})
+}
+
+func (store *GoogleStore) ListIdentities(
+	ctx context.Context,
+	subjectID string,
+) ([]googleoauth.LinkedIdentity, error) {
+	providerSubjects, err := store.adapter.client.SMembers(
+		ctx, store.adapter.key("google:subject:"+subjectID),
+	).Result()
+	if err != nil || len(providerSubjects) == 0 {
+		return []googleoauth.LinkedIdentity{}, err
+	}
+	values, err := store.adapter.client.HMGet(
+		ctx, store.adapter.key("google-identities"), providerSubjects...,
+	).Result()
+	if err != nil {
+		return nil, err
+	}
+	identities := make([]googleoauth.LinkedIdentity, 0, len(values))
+	for _, value := range values {
+		if value == nil {
+			continue
+		}
+		var identity googleIdentityRecord
+		if err := decodeRedisValue(value, &identity); err != nil {
+			return nil, err
+		}
+		identities = append(identities, googleoauth.LinkedIdentity{
+			ProviderSubject: identity.ProviderSubject,
+			Email:           identity.Email,
+			LinkedAt:        identity.LinkedAt,
+		})
+	}
+	slices.SortFunc(identities, func(left, right googleoauth.LinkedIdentity) int {
+		return left.LinkedAt.Compare(right.LinkedAt)
+	})
+	return identities, nil
 }
 
 func newUserRecord(email string, verified bool, createdAt time.Time) (userRecord, error) {

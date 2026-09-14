@@ -53,6 +53,12 @@ type IdentityResolution struct {
 	SubjectID       string
 }
 
+type LinkedIdentity struct {
+	ProviderSubject string
+	Email           string
+	LinkedAt        time.Time
+}
+
 type Store interface {
 	CreateChallenge(ctx context.Context, challenge Challenge) error
 	ConsumeChallenge(ctx context.Context, stateHash [32]byte, consumedAt time.Time) (Challenge, error)
@@ -63,6 +69,7 @@ type Store interface {
 
 // IdentityStore must atomically refuse removal of the user's last sign-in method.
 type IdentityStore interface {
+	ListIdentities(ctx context.Context, subjectID string) ([]LinkedIdentity, error)
 	UnlinkIdentity(ctx context.Context, subjectID, providerSubject string, unlinkedAt time.Time) error
 }
 
@@ -190,6 +197,27 @@ func (manager *Manager) Unlink(
 	}
 	manager.record(ctx, EventUnlinked, subjectID, sourceKey)
 	return nil
+}
+
+func (manager *Manager) List(ctx context.Context, subjectID string) ([]LinkedIdentity, error) {
+	if manager.identities == nil {
+		return nil, fmt.Errorf("%w: identity store is required", ErrInvalidConfig)
+	}
+	subjectID = strings.TrimSpace(subjectID)
+	if subjectID == "" {
+		return nil, ErrInvalidInput
+	}
+	identities, err := manager.identities.ListIdentities(ctx, subjectID)
+	if err != nil {
+		return nil, fmt.Errorf("list Google identities: %w", err)
+	}
+	for _, identity := range identities {
+		if strings.TrimSpace(identity.ProviderSubject) == "" ||
+			strings.TrimSpace(identity.Email) == "" || identity.LinkedAt.IsZero() {
+			return nil, ErrInvalidRecord
+		}
+	}
+	return identities, nil
 }
 
 func (manager *Manager) Begin(ctx context.Context, subjectID string) (Started, error) {

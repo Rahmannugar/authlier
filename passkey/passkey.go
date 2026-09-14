@@ -374,6 +374,21 @@ func (manager *Manager) Remove(
 	return nil
 }
 
+func (manager *Manager) List(ctx context.Context, subjectID string) ([]Credential, error) {
+	subjectID = strings.TrimSpace(subjectID)
+	if subjectID == "" {
+		return nil, ErrInvalidInput
+	}
+	user, err := manager.store.FindUserBySubject(ctx, subjectID)
+	if err != nil {
+		return nil, fmt.Errorf("find passkeys: %w", err)
+	}
+	if !validUser(user) || user.SubjectID != subjectID {
+		return nil, ErrInvalidRecord
+	}
+	return append([]Credential(nil), user.Credentials...), nil
+}
+
 func (manager *Manager) storeCeremony(
 	ctx context.Context,
 	ceremonyType CeremonyType,

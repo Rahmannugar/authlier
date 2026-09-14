@@ -47,6 +47,7 @@ type sessionResponse struct {
 }
 
 type sessionDetails struct {
+	ID        string    `json:"id"`
 	SubjectID string    `json:"subjectId"`
 	CreatedAt time.Time `json:"createdAt"`
 	ExpiresAt time.Time `json:"expiresAt"`
@@ -110,6 +111,7 @@ func newHandler(auth *Auth, config Config, baseURL *url.URL, basePath string) (h
 	}
 	handler.mux.HandleFunc("POST "+basePath+"/sign-out", handler.signOut)
 	handler.mux.HandleFunc("GET "+basePath+"/session", handler.session)
+	registerSessionRoutes(handler, basePath)
 	if auth.emailVerification != nil {
 		registerEmailVerificationRoutes(handler, basePath)
 	}
@@ -278,11 +280,7 @@ func (handler *httpHandler) session(response http.ResponseWriter, request *http.
 		writeError(response, http.StatusUnauthorized, "not_authenticated")
 		return
 	}
-	writeJSON(response, http.StatusOK, sessionResponse{Session: sessionDetails{
-		SubjectID: record.SubjectID,
-		CreatedAt: record.CreatedAt,
-		ExpiresAt: record.ExpiresAt,
-	}})
+	writeJSON(response, http.StatusOK, sessionResponse{Session: newSessionDetails(record)})
 }
 
 func (handler *httpHandler) setSession(response http.ResponseWriter, token string, expiresAt time.Time) {
@@ -294,6 +292,7 @@ func (handler *httpHandler) setSession(response http.ResponseWriter, token strin
 
 func newSessionDetails(record sessiontoken.Record) sessionDetails {
 	return sessionDetails{
+		ID:        record.ID,
 		SubjectID: record.SubjectID,
 		CreatedAt: record.CreatedAt,
 		ExpiresAt: record.ExpiresAt,

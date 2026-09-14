@@ -364,6 +364,25 @@ func (store *memoryStore) UnlinkIdentity(
 	return store.unlinkErr
 }
 
+func (store *memoryStore) ListIdentities(
+	_ context.Context,
+	subjectID string,
+) ([]googleoauth.LinkedIdentity, error) {
+	store.mu.Lock()
+	defer store.mu.Unlock()
+	identities := make([]googleoauth.LinkedIdentity, 0)
+	for providerSubject, user := range store.identities {
+		if user.ID == subjectID {
+			identities = append(identities, googleoauth.LinkedIdentity{
+				ProviderSubject: providerSubject,
+				Email:           "owner@example.com",
+				LinkedAt:        time.Now().UTC(),
+			})
+		}
+	}
+	return identities, nil
+}
+
 func (store *memoryStore) challenge() googleoauth.Challenge {
 	store.mu.Lock()
 	defer store.mu.Unlock()

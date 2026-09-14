@@ -26,6 +26,7 @@ func (adapter *Adapter) AccessSessions() *AccessSessionStore { return &AccessSes
 
 type sessionDocument struct {
 	TokenHash  []byte     `bson:"_id"`
+	ID         string     `bson:"session_id"`
 	SubjectID  string     `bson:"subject_id"`
 	CreatedAt  time.Time  `bson:"created_at"`
 	ExpiresAt  time.Time  `bson:"expires_at"`
@@ -34,13 +35,21 @@ type sessionDocument struct {
 }
 
 func sessionDocumentFrom(record sessiontoken.Record) sessionDocument {
-	return sessionDocument{record.TokenHash[:], record.SubjectID, record.CreatedAt, record.ExpiresAt, record.ExtendedAt, record.RevokedAt}
+	return sessionDocument{
+		TokenHash: record.TokenHash[:], ID: record.ID, SubjectID: record.SubjectID,
+		CreatedAt: record.CreatedAt, ExpiresAt: record.ExpiresAt,
+		ExtendedAt: record.ExtendedAt, RevokedAt: record.RevokedAt,
+	}
 }
 
 func (document sessionDocument) record() sessiontoken.Record {
 	var hash sessiontoken.TokenHash
 	copy(hash[:], document.TokenHash)
-	return sessiontoken.Record{SubjectID: document.SubjectID, TokenHash: hash, CreatedAt: document.CreatedAt, ExpiresAt: document.ExpiresAt, ExtendedAt: document.ExtendedAt, RevokedAt: document.RevokedAt}
+	return sessiontoken.Record{
+		ID: document.ID, SubjectID: document.SubjectID, TokenHash: hash,
+		CreatedAt: document.CreatedAt, ExpiresAt: document.ExpiresAt,
+		ExtendedAt: document.ExtendedAt, RevokedAt: document.RevokedAt,
+	}
 }
 
 func (store *SessionStore) Create(ctx context.Context, record sessiontoken.Record) error {

@@ -27,6 +27,7 @@ type EmailAndPasswordConfig struct {
 type EmailVerificationConfig struct {
 	Enabled                     bool
 	Lifetime                    time.Duration
+	VerificationURL             string
 	Sender                      emailverification.Sender
 	SendOnSignUp                bool
 	SendOnSignIn                bool
@@ -36,12 +37,13 @@ type EmailVerificationConfig struct {
 }
 
 type PasswordResetConfig struct {
-	Enabled                       bool
-	Lifetime                      time.Duration
-	Sender                        passwordreset.Sender
-	RevokeSessionsOnPasswordReset bool
-	AttemptGuard                  passwordreset.AttemptGuard
-	SecurityEvents                passwordreset.SecurityEventSink
+	Enabled                bool
+	Lifetime               time.Duration
+	ResetURL               string
+	Sender                 passwordreset.Sender
+	KeepSessionsAfterReset bool
+	AttemptGuard           passwordreset.AttemptGuard
+	SecurityEvents         passwordreset.SecurityEventSink
 }
 
 type CookieConfig struct {

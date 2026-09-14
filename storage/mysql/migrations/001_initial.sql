@@ -151,4 +151,3 @@ CREATE TABLE IF NOT EXISTS authlier_passkey_ceremonies (
     expires_at datetime(6) NOT NULL,
     consumed_at datetime(6)
 );
-

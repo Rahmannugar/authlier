@@ -193,6 +193,21 @@ func TestRemoveCannotDeleteTheLastSignInMethod(t *testing.T) {
 	}
 }
 
+func TestListReturnsTheSubjectsPasskeys(t *testing.T) {
+	store := newMemoryStore()
+	store.addCredential("user-1", credential("credential-1", 0))
+	store.addCredential("user-2", credential("credential-2", 0))
+	manager := newTestManager(store, &fakeProtocol{}, func() time.Time { return fixedTime })
+
+	credentials, err := manager.List(context.Background(), "user-1")
+	if err != nil {
+		t.Fatalf("list passkeys: %v", err)
+	}
+	if len(credentials) != 1 || string(credentials[0].ID) != "credential-1" {
+		t.Fatalf("unexpected passkeys: %+v", credentials)
+	}
+}
+
 func newTestManager(store Store, engine ceremonyProtocol, now func() time.Time) *Manager {
 	return &Manager{
 		store:    store,

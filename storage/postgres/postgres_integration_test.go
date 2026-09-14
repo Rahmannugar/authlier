@@ -15,6 +15,7 @@ import (
 	"github.com/Rahmannugar/authlier"
 	"github.com/Rahmannugar/authlier/emailpassword"
 	"github.com/Rahmannugar/authlier/oidc"
+	"github.com/Rahmannugar/authlier/sessiontoken"
 	"github.com/Rahmannugar/authlier/storage/postgres"
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -102,6 +103,26 @@ func TestPostgresAdapter(t *testing.T) {
 		configured.Handler().ServeHTTP(sessionResponse, currentSession)
 		if sessionResponse.Code != http.StatusOK {
 			t.Fatalf("session status = %d, body = %s", sessionResponse.Code, sessionResponse.Body.String())
+		}
+	})
+
+	t.Run("sessions persist public IDs", func(t *testing.T) {
+		now := time.Now().UTC()
+		var hash sessiontoken.TokenHash
+		hash[0] = 3
+		record := sessiontoken.Record{
+			ID:        uuid.Must(uuid.NewV7()).String(),
+			SubjectID: "session-user",
+			TokenHash: hash,
+			CreatedAt: now,
+			ExpiresAt: now.Add(time.Hour),
+		}
+		if err := adapter.Sessions().Create(ctx, record); err != nil {
+			t.Fatalf("create session: %v", err)
+		}
+		found, err := adapter.Sessions().FindByTokenHash(ctx, hash)
+		if err != nil || found.ID != record.ID {
+			t.Fatalf("find session: record=%+v err=%v", found, err)
 		}
 	})
 

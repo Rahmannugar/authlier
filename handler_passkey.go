@@ -36,12 +36,34 @@ type passkeyResponse struct {
 	CredentialID string `json:"credentialId"`
 }
 
+type passkeysResponse struct {
+	Passkeys []passkeyResponse `json:"passkeys"`
+}
+
 func registerPasskeyRoutes(handler *httpHandler, basePath string) {
 	handler.mux.HandleFunc("POST "+basePath+"/passkey/register/options", handler.passkeyRegistrationOptions)
 	handler.mux.HandleFunc("POST "+basePath+"/passkey/register/verify", handler.verifyPasskeyRegistration)
 	handler.mux.HandleFunc("POST "+basePath+"/passkey/sign-in/options", handler.passkeySignInOptions)
 	handler.mux.HandleFunc("POST "+basePath+"/passkey/sign-in/verify", handler.verifyPasskeySignIn)
+	handler.mux.HandleFunc("GET "+basePath+"/passkey/list", handler.listPasskeys)
 	handler.mux.HandleFunc("POST "+basePath+"/passkey/remove", handler.removePasskey)
+}
+
+func (handler *httpHandler) listPasskeys(response http.ResponseWriter, request *http.Request) {
+	session, ok := handler.requireSession(response, request, false)
+	if !ok {
+		return
+	}
+	credentials, err := handler.auth.passkeys.List(request.Context(), session.SubjectID)
+	if err != nil {
+		writePasskeyError(response, err)
+		return
+	}
+	passkeys := make([]passkeyResponse, len(credentials))
+	for index, credential := range credentials {
+		passkeys[index].CredentialID = base64.RawURLEncoding.EncodeToString(credential.ID)
+	}
+	writeJSON(response, http.StatusOK, passkeysResponse{Passkeys: passkeys})
 }
 
 func (handler *httpHandler) passkeyRegistrationOptions(response http.ResponseWriter, request *http.Request) {

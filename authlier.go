@@ -21,6 +21,18 @@ import (
 
 var ErrInvalidConfig = errors.New("invalid Authlier configuration")
 
+const (
+	defaultSessionLifetime     = 7 * 24 * time.Hour
+	defaultFreshAge            = 15 * time.Minute
+	defaultEmailTokenLifetime  = time.Hour
+	defaultTOTPEnrollment      = 10 * time.Minute
+	defaultTOTPChallenge       = 5 * time.Minute
+	defaultTOTPRecoveryCodes   = 10
+	defaultPasskeyCeremony     = 5 * time.Minute
+	defaultProviderState       = 10 * time.Minute
+	defaultSAMLRequestLifetime = 5 * time.Minute
+)
+
 type Auth struct {
 	handler                       http.Handler
 	password                      *emailpassword.Manager
@@ -47,6 +59,7 @@ type Auth struct {
 }
 
 func New(config Config) (*Auth, error) {
+	applyConfigDefaults(&config)
 	if strings.TrimSpace(config.AppName) == "" || config.Database == nil {
 		return nil, fmt.Errorf("%w: app name and database are required", ErrInvalidConfig)
 	}
@@ -72,12 +85,8 @@ func New(config Config) (*Auth, error) {
 	if !strings.HasPrefix(basePath, "/") || strings.HasSuffix(basePath, "/") {
 		return nil, fmt.Errorf("%w: base path must start but not end with a slash", ErrInvalidConfig)
 	}
-	if config.Session.Lifetime <= 0 {
-		return nil, fmt.Errorf("%w: session lifetime must be positive", ErrInvalidConfig)
-	}
-	freshAge := config.Session.FreshAge
-	if freshAge <= 0 {
-		freshAge = 15 * time.Minute
+	if config.Session.FreshAge <= 0 {
+		return nil, fmt.Errorf("%w: session fresh age must be positive", ErrInvalidConfig)
 	}
 	stores := config.Database.Stores()
 	if stores.Sessions == nil {
@@ -109,12 +118,12 @@ func New(config Config) (*Auth, error) {
 	auth := &Auth{
 		password:                      passwords,
 		sessions:                      sessions,
-		sessionFreshAge:               freshAge,
+		sessionFreshAge:               config.Session.FreshAge,
 		requireEmailVerification:      config.EmailAndPassword.RequireEmailVerification,
 		sendVerificationOnSignUp:      config.EmailVerification.SendOnSignUp,
 		sendVerificationOnSignIn:      config.EmailVerification.SendOnSignIn,
 		autoSignInAfterVerification:   config.EmailVerification.AutoSignInAfterVerification,
-		revokeSessionsOnPasswordReset: config.PasswordReset.RevokeSessionsOnPasswordReset,
+		revokeSessionsOnPasswordReset: !config.PasswordReset.KeepSessionsAfterReset,
 	}
 	if config.TOTP.Enabled {
 		if stores.TOTP == nil {
@@ -241,11 +250,24 @@ func New(config Config) (*Auth, error) {
 		if stores.EmailVerification == nil {
 			return nil, fmt.Errorf("%w: database does not provide email verification storage", ErrInvalidConfig)
 		}
+		if config.EmailVerification.Sender == nil {
+			return nil, fmt.Errorf("%w: email verification sender is required", ErrInvalidConfig)
+		}
+		verificationURL := config.EmailVerification.VerificationURL
+		if strings.TrimSpace(verificationURL) == "" {
+			verificationURL = baseURL.Scheme + "://" + baseURL.Host + basePath + "/verify-email"
+		}
+		verificationSender, err := newVerificationURLSender(
+			config.EmailVerification.Sender, verificationURL,
+		)
+		if err != nil {
+			return nil, fmt.Errorf("%w: invalid email verification URL", ErrInvalidConfig)
+		}
 		auth.emailVerification, err = emailverification.NewManager(
 			stores.EmailVerification,
 			emailverification.Config{
 				Lifetime:       config.EmailVerification.Lifetime,
-				Sender:         config.EmailVerification.Sender,
+				Sender:         verificationSender,
 				AttemptGuard:   config.EmailVerification.AttemptGuard,
 				SecurityEvents: config.EmailVerification.SecurityEvents,
 			},
@@ -258,9 +280,20 @@ func New(config Config) (*Auth, error) {
 		if stores.PasswordReset == nil {
 			return nil, fmt.Errorf("%w: database does not provide password reset storage", ErrInvalidConfig)
 		}
+		if config.PasswordReset.Sender == nil {
+			return nil, fmt.Errorf("%w: password reset sender is required", ErrInvalidConfig)
+		}
+		resetURL := config.PasswordReset.ResetURL
+		if strings.TrimSpace(resetURL) == "" {
+			resetURL = baseURL.Scheme + "://" + baseURL.Host + "/reset-password"
+		}
+		resetSender, err := newResetURLSender(config.PasswordReset.Sender, resetURL)
+		if err != nil {
+			return nil, fmt.Errorf("%w: invalid password reset URL", ErrInvalidConfig)
+		}
 		auth.passwordReset, err = passwordreset.NewManager(stores.PasswordReset, passwordreset.Config{
 			Lifetime:         config.PasswordReset.Lifetime,
-			Sender:           config.PasswordReset.Sender,
+			Sender:           resetSender,
 			ValidatePassword: passwordreset.PasswordValidator(config.EmailAndPassword.ValidatePassword),
 			AttemptGuard:     config.PasswordReset.AttemptGuard,
 			SecurityEvents:   config.PasswordReset.SecurityEvents,
@@ -275,6 +308,42 @@ func New(config Config) (*Auth, error) {
 	}
 	auth.handler = handler
 	return auth, nil
+}
+
+func applyConfigDefaults(config *Config) {
+	if config.Session.Lifetime == 0 {
+		config.Session.Lifetime = defaultSessionLifetime
+	}
+	if config.Session.FreshAge == 0 {
+		config.Session.FreshAge = defaultFreshAge
+	}
+	if config.EmailVerification.Lifetime == 0 {
+		config.EmailVerification.Lifetime = defaultEmailTokenLifetime
+	}
+	if config.PasswordReset.Lifetime == 0 {
+		config.PasswordReset.Lifetime = defaultEmailTokenLifetime
+	}
+	if config.TOTP.EnrollmentLifetime == 0 {
+		config.TOTP.EnrollmentLifetime = defaultTOTPEnrollment
+	}
+	if config.TOTP.ChallengeLifetime == 0 {
+		config.TOTP.ChallengeLifetime = defaultTOTPChallenge
+	}
+	if config.TOTP.RecoveryCodeCount == 0 {
+		config.TOTP.RecoveryCodeCount = defaultTOTPRecoveryCodes
+	}
+	if config.Passkeys.CeremonyLifetime == 0 {
+		config.Passkeys.CeremonyLifetime = defaultPasskeyCeremony
+	}
+	if config.Google.StateLifetime == 0 {
+		config.Google.StateLifetime = defaultProviderState
+	}
+	if config.OIDC.StateLifetime == 0 {
+		config.OIDC.StateLifetime = defaultProviderState
+	}
+	if config.SAML.RequestLifetime == 0 {
+		config.SAML.RequestLifetime = defaultSAMLRequestLifetime
+	}
 }
 
 func (auth *Auth) Handler() http.Handler { return auth.handler }

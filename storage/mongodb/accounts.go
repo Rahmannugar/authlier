@@ -402,6 +402,34 @@ func (store *GoogleStore) UnlinkIdentity(ctx context.Context, subjectID, provide
 	})
 }
 
+func (store *GoogleStore) ListIdentities(
+	ctx context.Context,
+	subjectID string,
+) ([]googleoauth.LinkedIdentity, error) {
+	cursor, err := store.adapter.collection(googleIdentitiesCollection).Find(
+		ctx,
+		bson.M{"user_id": subjectID},
+		options.Find().SetSort(bson.D{{Key: "linked_at", Value: 1}}),
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer cursor.Close(ctx)
+	identities := make([]googleoauth.LinkedIdentity, 0)
+	for cursor.Next(ctx) {
+		var document googleIdentityDocument
+		if err := cursor.Decode(&document); err != nil {
+			return nil, err
+		}
+		identities = append(identities, googleoauth.LinkedIdentity{
+			ProviderSubject: document.ProviderSubject,
+			Email:           document.Email,
+			LinkedAt:        document.LinkedAt,
+		})
+	}
+	return identities, cursor.Err()
+}
+
 func newUserDocument(email string, verified bool, createdAt time.Time) (userDocument, error) {
 	id, err := uuid.NewV7()
 	if err != nil {

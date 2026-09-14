@@ -498,6 +498,27 @@ func (store *GoogleStore) UnlinkIdentity(
 	return tx.Commit(ctx)
 }
 
+func (store *GoogleStore) ListIdentities(
+	ctx context.Context,
+	subjectID string,
+) ([]googleoauth.LinkedIdentity, error) {
+	rows, err := store.adapter.pool.Query(ctx, `SELECT provider_subject, email, linked_at
+		FROM authlier_google_identities WHERE user_id = $1 ORDER BY linked_at`, subjectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	identities := make([]googleoauth.LinkedIdentity, 0)
+	for rows.Next() {
+		var identity googleoauth.LinkedIdentity
+		if err := rows.Scan(&identity.ProviderSubject, &identity.Email, &identity.LinkedAt); err != nil {
+			return nil, err
+		}
+		identities = append(identities, identity)
+	}
+	return identities, rows.Err()
+}
+
 func insertUser(
 	ctx context.Context,
 	tx pgx.Tx,

@@ -122,8 +122,10 @@ func TestRequiredEmailVerificationControlsSessionCreation(t *testing.T) {
 		"/api/auth/sign-up/email",
 		`{"email":"owner@example.com","password":"correct horse battery staple"}`,
 	))
-	if response.Code != http.StatusCreated || sender.token == "" || sessions.created != 0 {
-		t.Fatalf("sign up: status=%d token=%q sessions=%d", response.Code, sender.token, sessions.created)
+	if response.Code != http.StatusCreated || sender.token == "" ||
+		sender.url != "https://app.example.com/api/auth/verify-email?token="+sender.token ||
+		sessions.created != 0 {
+		t.Fatalf("sign up: status=%d token=%q url=%q sessions=%d", response.Code, sender.token, sender.url, sessions.created)
 	}
 
 	response = httptest.NewRecorder()
@@ -216,6 +218,7 @@ func (store *verificationStore) Verify(
 
 type verificationSender struct {
 	token string
+	url   string
 }
 
 func (sender *verificationSender) SendVerification(
@@ -223,6 +226,7 @@ func (sender *verificationSender) SendVerification(
 	message emailverification.Message,
 ) error {
 	sender.token = message.Token
+	sender.url = message.URL
 	return nil
 }
 
@@ -289,6 +293,7 @@ type handlerSessionStore struct {
 
 func newSessionStore(now time.Time) *handlerSessionStore {
 	return &handlerSessionStore{record: sessiontoken.Record{
+		ID:        "01994f4e-0000-7000-8000-000000000001",
 		SubjectID: "user_123",
 		TokenHash: sessiontoken.TokenHash{1},
 		CreatedAt: now,

@@ -23,7 +23,8 @@ func TestSessionLifecycleRotatesExpiresAndRevokesCredentials(t *testing.T) {
 	if err != nil {
 		t.Fatalf("create session: %v", err)
 	}
-	if issued.Token == "" || issued.Record.TokenHash == (sessiontoken.TokenHash{}) {
+	if issued.Token == "" || issued.Record.ID == "" ||
+		issued.Record.TokenHash == (sessiontoken.TokenHash{}) {
 		t.Fatal("created session did not contain an opaque credential and hash")
 	}
 	if stored := store.records[issued.Record.TokenHash]; stored.TokenHash == (sessiontoken.TokenHash{}) {
@@ -108,6 +109,29 @@ func TestListAndRevokeAllSessionsBySubject(t *testing.T) {
 	}
 	if err := manager.RevokeAll(ctx, "user_123"); err != nil {
 		t.Fatalf("revoke all should be idempotent: %v", err)
+	}
+}
+
+func TestRevokeByIDCannotRevokeAnotherSubjectsSession(t *testing.T) {
+	store := newMemoryStore()
+	manager := newManager(t, store, nil, nil)
+	ctx := context.Background()
+	owned, err := manager.Create(ctx, "user_123")
+	if err != nil {
+		t.Fatalf("create owned session: %v", err)
+	}
+	other, err := manager.Create(ctx, "user_other")
+	if err != nil {
+		t.Fatalf("create other session: %v", err)
+	}
+	if err := manager.RevokeByID(ctx, "user_123", other.Record.ID); !errors.Is(err, sessiontoken.ErrNotFound) {
+		t.Fatalf("revoke another subject's session: %v", err)
+	}
+	if err := manager.RevokeByID(ctx, "user_123", owned.Record.ID); err != nil {
+		t.Fatalf("revoke owned session: %v", err)
+	}
+	if _, err := manager.Resolve(ctx, owned.Token); !errors.Is(err, sessiontoken.ErrInactive) {
+		t.Fatalf("resolve revoked session: %v", err)
 	}
 }
 

@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/Rahmannugar/authlier/token"
+	"github.com/google/uuid"
 )
 
 const creationAttempts = 3
@@ -29,6 +30,7 @@ type TokenHash = token.Hash
 
 // Record is the server-side state associated with an opaque session token.
 type Record struct {
+	ID         string
 	SubjectID  string
 	TokenHash  TokenHash
 	CreatedAt  time.Time
@@ -249,6 +251,27 @@ func (manager *Manager) Revoke(ctx context.Context, rawToken string) error {
 	return manager.deleteCached(ctx, tokenHash)
 }
 
+// RevokeByID revokes a session only when it belongs to the supplied subject.
+func (manager *Manager) RevokeByID(ctx context.Context, subjectID, sessionID string) error {
+	if strings.TrimSpace(subjectID) == "" || strings.TrimSpace(sessionID) == "" {
+		return ErrInvalidRecord
+	}
+	records, err := manager.List(ctx, subjectID)
+	if err != nil {
+		return err
+	}
+	for _, record := range records {
+		if record.ID != sessionID {
+			continue
+		}
+		if err := manager.store.Revoke(ctx, record.TokenHash, manager.now().UTC()); err != nil {
+			return fmt.Errorf("revoke durable session: %w", err)
+		}
+		return manager.deleteCached(ctx, record.TokenHash)
+	}
+	return ErrNotFound
+}
+
 // List returns the durable sessions for a subject. Inactive sessions are
 // included so callers can show session history and decide what to remove.
 func (manager *Manager) List(ctx context.Context, subjectID string) ([]Record, error) {
@@ -298,6 +321,10 @@ func HashToken(rawToken string) (TokenHash, error) {
 }
 
 func (manager *Manager) newIssued(subjectID string) (Issued, error) {
+	sessionID, err := uuid.NewV7()
+	if err != nil {
+		return Issued{}, fmt.Errorf("generate session ID: %w", err)
+	}
 	rawToken, tokenHash, err := token.Generate()
 	if err != nil {
 		return Issued{}, fmt.Errorf("generate session token: %w", err)
@@ -307,6 +334,7 @@ func (manager *Manager) newIssued(subjectID string) (Issued, error) {
 	return Issued{
 		Token: rawToken,
 		Record: Record{
+			ID:        sessionID.String(),
 			SubjectID: subjectID,
 			TokenHash: tokenHash,
 			CreatedAt: now,
@@ -316,7 +344,8 @@ func (manager *Manager) newIssued(subjectID string) (Issued, error) {
 }
 
 func validRecord(record Record) error {
-	if strings.TrimSpace(record.SubjectID) == "" || record.TokenHash == (TokenHash{}) ||
+	if strings.TrimSpace(record.ID) == "" || strings.TrimSpace(record.SubjectID) == "" ||
+		record.TokenHash == (TokenHash{}) ||
 		record.CreatedAt.IsZero() ||
 		!record.ExpiresAt.After(record.CreatedAt) {
 		return ErrInvalidRecord

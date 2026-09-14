@@ -63,6 +63,7 @@ type Message struct {
 	UserID    string
 	Email     string
 	Token     string
+	URL       string
 	ExpiresAt time.Time
 }
 

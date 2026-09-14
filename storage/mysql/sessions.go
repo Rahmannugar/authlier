@@ -26,8 +26,8 @@ func (adapter *Adapter) AccessSessions() *AccessSessionStore {
 
 func (store *SessionStore) Create(ctx context.Context, record sessiontoken.Record) error {
 	_, err := store.adapter.database.ExecContext(ctx, `INSERT INTO authlier_sessions
-		(token_hash, subject_id, created_at, expires_at, extended_at, revoked_at)
-		VALUES (?, ?, ?, ?, ?, ?)`, record.TokenHash[:], record.SubjectID,
+		(id, token_hash, subject_id, created_at, expires_at, extended_at, revoked_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`, record.ID, record.TokenHash[:], record.SubjectID,
 		record.CreatedAt, record.ExpiresAt, record.ExtendedAt, record.RevokedAt)
 	if uniqueViolation(err) {
 		return sessiontoken.ErrConflict
@@ -39,7 +39,7 @@ func (store *SessionStore) FindByTokenHash(
 	ctx context.Context,
 	tokenHash sessiontoken.TokenHash,
 ) (sessiontoken.Record, error) {
-	return scanSession(store.adapter.database.QueryRowContext(ctx, `SELECT token_hash, subject_id,
+	return scanSession(store.adapter.database.QueryRowContext(ctx, `SELECT id, token_hash, subject_id,
 		created_at, expires_at, extended_at, revoked_at FROM authlier_sessions
 		WHERE token_hash = ?`, tokenHash[:]))
 }
@@ -48,7 +48,7 @@ func (store *SessionStore) ListBySubject(
 	ctx context.Context,
 	subjectID string,
 ) ([]sessiontoken.Record, error) {
-	rows, err := store.adapter.database.QueryContext(ctx, `SELECT token_hash, subject_id,
+	rows, err := store.adapter.database.QueryContext(ctx, `SELECT id, token_hash, subject_id,
 		created_at, expires_at, extended_at, revoked_at FROM authlier_sessions
 		WHERE subject_id = ? ORDER BY created_at DESC`, subjectID)
 	if err != nil {
@@ -90,7 +90,7 @@ func (store *SessionStore) Extend(
 	if affected == 0 {
 		return sessiontoken.Record{}, sessiontoken.ErrInactive
 	}
-	record, err := scanSession(tx.QueryRowContext(ctx, `SELECT token_hash, subject_id,
+	record, err := scanSession(tx.QueryRowContext(ctx, `SELECT id, token_hash, subject_id,
 		created_at, expires_at, extended_at, revoked_at FROM authlier_sessions
 		WHERE token_hash = ?`, tokenHash[:]))
 	if err != nil {
@@ -122,8 +122,8 @@ func (store *SessionStore) Rotate(
 		return sessiontoken.ErrInactive
 	}
 	if _, err := tx.ExecContext(ctx, `INSERT INTO authlier_sessions
-		(token_hash, subject_id, created_at, expires_at, extended_at, revoked_at)
-		VALUES (?, ?, ?, ?, ?, ?)`, replacement.TokenHash[:], replacement.SubjectID,
+		(id, token_hash, subject_id, created_at, expires_at, extended_at, revoked_at)
+		VALUES (?, ?, ?, ?, ?, ?, ?)`, replacement.ID, replacement.TokenHash[:], replacement.SubjectID,
 		replacement.CreatedAt, replacement.ExpiresAt, replacement.ExtendedAt, replacement.RevokedAt); err != nil {
 		if uniqueViolation(err) {
 			return sessiontoken.ErrConflict
@@ -167,7 +167,7 @@ func (store *SessionStore) RevokeAll(
 		return nil, err
 	}
 	defer tx.Rollback()
-	rows, err := tx.QueryContext(ctx, `SELECT token_hash, subject_id, created_at,
+	rows, err := tx.QueryContext(ctx, `SELECT id, token_hash, subject_id, created_at,
 		expires_at, extended_at, revoked_at FROM authlier_sessions
 		WHERE subject_id = ? FOR UPDATE`, subjectID)
 	if err != nil {
@@ -204,7 +204,7 @@ type rowScanner interface {
 func scanSession(row rowScanner) (sessiontoken.Record, error) {
 	var record sessiontoken.Record
 	var hash []byte
-	if err := row.Scan(&hash, &record.SubjectID, &record.CreatedAt, &record.ExpiresAt,
+	if err := row.Scan(&record.ID, &hash, &record.SubjectID, &record.CreatedAt, &record.ExpiresAt,
 		&record.ExtendedAt, &record.RevokedAt); errors.Is(err, sql.ErrNoRows) {
 		return record, sessiontoken.ErrNotFound
 	} else if err != nil {

@@ -135,7 +135,7 @@ func TestRedisAdapter(t *testing.T) {
 		now := time.Now().UTC()
 		var hash sessiontoken.TokenHash
 		hash[0] = 3
-		record := sessiontoken.Record{SubjectID: "session-user", TokenHash: hash, CreatedAt: now, ExpiresAt: now.Add(time.Hour)}
+		record := sessiontoken.Record{ID: uuid.Must(uuid.NewV7()).String(), SubjectID: "session-user", TokenHash: hash, CreatedAt: now, ExpiresAt: now.Add(time.Hour)}
 		if err := adapter.Sessions().Create(ctx, record); err != nil {
 			t.Fatalf("create session: %v", err)
 		}
@@ -309,6 +309,7 @@ func TestSessionCache(t *testing.T) {
 	tokenHash[0] = 1
 	now := time.Now().UTC()
 	record := sessiontoken.Record{
+		ID:        uuid.Must(uuid.NewV7()).String(),
 		SubjectID: "user",
 		TokenHash: tokenHash,
 		CreatedAt: now,

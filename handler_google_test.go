@@ -24,12 +24,10 @@ func TestGoogleRoutesCompleteAuthenticationWithTheStableProviderSubject(t *testi
 			Sessions: sessions,
 		}},
 		Google: GoogleConfig{
-			Enabled:       true,
-			ClientID:      "google-client-id",
-			StateLifetime: 5 * time.Minute,
-			Provider:      provider,
+			Enabled:  true,
+			ClientID: "google-client-id",
+			Provider: provider,
 		},
-		Session: SessionConfig{Lifetime: time.Hour},
 	})
 	if err != nil {
 		t.Fatalf("create Authlier: %v", err)
@@ -64,6 +62,19 @@ func TestGoogleRoutesCompleteAuthenticationWithTheStableProviderSubject(t *testi
 	if googleStore.resolution.ProviderSubject != "google-account-123" ||
 		googleStore.resolution.Email != "owner@example.com" {
 		t.Fatalf("unexpected identity resolution: %+v", googleStore.resolution)
+	}
+
+	listRequest := httptest.NewRequest(http.MethodGet, "/api/auth/list-accounts/google", nil)
+	listRequest.AddCookie(callback.Result().Cookies()[0])
+	listed := httptest.NewRecorder()
+	auth.Handler().ServeHTTP(listed, listRequest)
+	var accounts googleAccountsResponse
+	if err := json.Unmarshal(listed.Body.Bytes(), &accounts); err != nil {
+		t.Fatalf("decode linked accounts: %v", err)
+	}
+	if listed.Code != http.StatusOK || len(accounts.Accounts) != 1 ||
+		accounts.Accounts[0].ProviderSubject != "google-account-123" {
+		t.Fatalf("linked accounts: status=%d accounts=%+v", listed.Code, accounts.Accounts)
 	}
 }
 
@@ -110,6 +121,20 @@ func (*handlerGoogleStore) UnlinkIdentity(
 	time.Time,
 ) error {
 	return nil
+}
+
+func (*handlerGoogleStore) ListIdentities(
+	_ context.Context,
+	subjectID string,
+) ([]googleoauth.LinkedIdentity, error) {
+	if subjectID != "user_123" {
+		return []googleoauth.LinkedIdentity{}, nil
+	}
+	return []googleoauth.LinkedIdentity{{
+		ProviderSubject: "google-account-123",
+		Email:           "owner@example.com",
+		LinkedAt:        time.Now().UTC(),
+	}}, nil
 }
 
 type handlerGoogleProvider struct {

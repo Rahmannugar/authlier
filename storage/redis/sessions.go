@@ -27,10 +27,11 @@ func (adapter *Adapter) AccessSessions() *AccessSessionStore { return &AccessSes
 
 func (store *SessionStore) Create(ctx context.Context, record sessiontoken.Record) error {
 	sessions := store.adapter.key("sessions")
+	sessionIDs := store.adapter.key("session-ids")
 	subject := store.adapter.key("sessions:subject:" + record.SubjectID)
 	field := hashKey(record.TokenHash[:])
 	encoded, _ := encodeJSON(record)
-	return store.adapter.watch(ctx, []string{sessions, subject}, func(tx *redislibrary.Tx) error {
+	return store.adapter.watch(ctx, []string{sessions, sessionIDs, subject}, func(tx *redislibrary.Tx) error {
 		exists, err := tx.HExists(ctx, sessions, field).Result()
 		if err != nil {
 			return err
@@ -38,8 +39,14 @@ func (store *SessionStore) Create(ctx context.Context, record sessiontoken.Recor
 		if exists {
 			return sessiontoken.ErrConflict
 		}
+		if exists, err = tx.HExists(ctx, sessionIDs, record.ID).Result(); err != nil {
+			return err
+		} else if exists {
+			return sessiontoken.ErrConflict
+		}
 		_, err = tx.TxPipelined(ctx, func(pipe redislibrary.Pipeliner) error {
 			pipe.HSet(ctx, sessions, field, encoded)
+			pipe.HSet(ctx, sessionIDs, record.ID, field)
 			pipe.SAdd(ctx, subject, field)
 			return nil
 		})
@@ -105,9 +112,10 @@ func (store *SessionStore) Extend(ctx context.Context, tokenHash sessiontoken.To
 
 func (store *SessionStore) Rotate(ctx context.Context, current sessiontoken.TokenHash, replacement sessiontoken.Record, rotatedAt time.Time) error {
 	sessions := store.adapter.key("sessions")
+	sessionIDs := store.adapter.key("session-ids")
 	currentField, replacementField := hashKey(current[:]), hashKey(replacement.TokenHash[:])
 	currentSet, replacementSet := "", store.adapter.key("sessions:subject:"+replacement.SubjectID)
-	return store.adapter.watch(ctx, []string{sessions, replacementSet}, func(tx *redislibrary.Tx) error {
+	return store.adapter.watch(ctx, []string{sessions, sessionIDs, replacementSet}, func(tx *redislibrary.Tx) error {
 		var record sessiontoken.Record
 		if err := readJSON(ctx, tx, sessions, currentField, &record); errors.Is(err, redislibrary.Nil) {
 			return sessiontoken.ErrNotFound
@@ -122,12 +130,18 @@ func (store *SessionStore) Rotate(ctx context.Context, current sessiontoken.Toke
 		} else if exists {
 			return sessiontoken.ErrConflict
 		}
+		if exists, err := tx.HExists(ctx, sessionIDs, replacement.ID).Result(); err != nil {
+			return err
+		} else if exists {
+			return sessiontoken.ErrConflict
+		}
 		currentSet = store.adapter.key("sessions:subject:" + record.SubjectID)
 		record.RevokedAt = &rotatedAt
 		currentJSON, _ := encodeJSON(record)
 		replacementJSON, _ := encodeJSON(replacement)
 		_, err := tx.TxPipelined(ctx, func(pipe redislibrary.Pipeliner) error {
 			pipe.HSet(ctx, sessions, currentField, currentJSON, replacementField, replacementJSON)
+			pipe.HSet(ctx, sessionIDs, replacement.ID, replacementField)
 			pipe.SAdd(ctx, currentSet, currentField)
 			pipe.SAdd(ctx, replacementSet, replacementField)
 			return nil
