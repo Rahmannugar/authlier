@@ -29,6 +29,7 @@ const (
 	defaultAccessTokenLifetime  = 15 * time.Minute
 	defaultRefreshTokenLifetime = 30 * 24 * time.Hour
 	defaultEmailTokenLifetime   = time.Hour
+	defaultEmailOTPLifetime     = 10 * time.Minute
 	defaultTOTPEnrollment       = 10 * time.Minute
 	defaultTOTPChallenge        = 5 * time.Minute
 	defaultTOTPRecoveryCodes    = 10
@@ -55,6 +56,7 @@ type Auth struct {
 	sendVerificationOnSignUp      bool
 	sendVerificationOnSignIn      bool
 	autoSignInAfterVerification   bool
+	emailVerificationDelivery     emailverification.DeliveryMethod
 	revokeSessionsOnPasswordReset bool
 	googleSuccessRedirectURL      string
 	oidcSuccessRedirectURL        string
@@ -150,6 +152,7 @@ func New(config Config) (*Auth, error) {
 		sendVerificationOnSignUp:      config.EmailVerification.SendOnSignUp,
 		sendVerificationOnSignIn:      config.EmailVerification.SendOnSignIn,
 		autoSignInAfterVerification:   config.EmailVerification.AutoSignInAfterVerification,
+		emailVerificationDelivery:     config.EmailVerification.Delivery,
 		revokeSessionsOnPasswordReset: !config.PasswordReset.KeepSessionsAfterReset,
 	}
 	if config.Session.Mode == SessionModeCookie {
@@ -317,19 +320,22 @@ func New(config Config) (*Auth, error) {
 		if config.EmailVerification.Sender == nil {
 			return nil, fmt.Errorf("%w: email verification sender is required", ErrInvalidConfig)
 		}
-		verificationURL := config.EmailVerification.VerificationURL
-		if strings.TrimSpace(verificationURL) == "" {
-			verificationURL = baseURL.Scheme + "://" + baseURL.Host + basePath + "/verify-email"
-		}
-		verificationSender, err := newVerificationURLSender(
-			config.EmailVerification.Sender, verificationURL,
-		)
-		if err != nil {
-			return nil, fmt.Errorf("%w: invalid email verification URL", ErrInvalidConfig)
+		verificationSender := config.EmailVerification.Sender
+		if config.EmailVerification.Delivery == emailverification.DeliveryMethodLink {
+			verificationURL := config.EmailVerification.VerificationURL
+			if strings.TrimSpace(verificationURL) == "" {
+				verificationURL = baseURL.Scheme + "://" + baseURL.Host + basePath + "/verify-email"
+			}
+			verificationSender, err = newVerificationURLSender(verificationSender, verificationURL)
+			if err != nil {
+				return nil, fmt.Errorf("%w: invalid email verification URL", ErrInvalidConfig)
+			}
 		}
 		auth.emailVerification, err = emailverification.NewManager(
 			stores.EmailVerification,
 			emailverification.Config{
+				Delivery:       config.EmailVerification.Delivery,
+				OTPSecret:      config.EmailVerification.OTPSecret,
 				Lifetime:       config.EmailVerification.Lifetime,
 				Sender:         verificationSender,
 				AttemptGuard:   config.EmailVerification.AttemptGuard,
@@ -409,8 +415,15 @@ func applyConfigDefaults(config *Config) {
 	if config.Session.Bearer.RefreshTokenLifetime == 0 {
 		config.Session.Bearer.RefreshTokenLifetime = defaultRefreshTokenLifetime
 	}
+	if config.EmailVerification.Delivery == "" {
+		config.EmailVerification.Delivery = emailverification.DeliveryMethodLink
+	}
 	if config.EmailVerification.Lifetime == 0 {
-		config.EmailVerification.Lifetime = defaultEmailTokenLifetime
+		if config.EmailVerification.Delivery == emailverification.DeliveryMethodOTP {
+			config.EmailVerification.Lifetime = defaultEmailOTPLifetime
+		} else {
+			config.EmailVerification.Lifetime = defaultEmailTokenLifetime
+		}
 	}
 	if config.PasswordReset.Lifetime == 0 {
 		config.PasswordReset.Lifetime = defaultEmailTokenLifetime

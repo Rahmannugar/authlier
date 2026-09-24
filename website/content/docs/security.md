@@ -30,8 +30,8 @@ localhost.
 
 Keep provider client secrets, signing keys, database credentials, and TOTP
 encryption keys outside source control. Do not log passwords, raw session
-tokens, recovery codes, verification tokens, reset tokens, OAuth codes, or SAML
-responses.
+tokens, email OTP codes, recovery codes, verification tokens, reset tokens,
+OAuth codes, or SAML responses.
 
 In bearer mode, keep the Ed25519 private key in server secret storage and use a
 distinct `KeyID` when rotating it. Native clients should keep refresh tokens in
@@ -50,6 +50,12 @@ Authentication methods accept feature-specific `AttemptGuard` implementations.
 Use them to limit repeated attempts by operation, account identifier, and
 trusted client address. Configure `TrustedProxies` only for proxies you operate;
 otherwise a caller may forge the forwarded address used by the guard.
+
+Email OTP verification requires an attempt guard because six-digit codes have a
+small input space. Use shared guard state across server instances and combine
+the normalized email with the trusted request source when enforcing limits.
+Keep the dedicated OTP HMAC secret in application secret storage and rotate it
+only when invalidating all outstanding codes is acceptable.
 
 ## Deliver security events
 
