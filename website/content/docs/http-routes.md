@@ -37,7 +37,8 @@ mode may omit `Origin`.
 | Route | Request | Result |
 | --- | --- | --- |
 | `POST /api/auth/send-verification-email` | `email` | Sends a verification message and returns `202` |
-| `GET /api/auth/verify-email?token=...` | Query token | Verifies the email |
+| `GET /api/auth/verify-email?token=...` | Query token in link mode | Verifies the email |
+| `POST /api/auth/verify-email` | `email`, `code` in OTP mode | Verifies the email |
 | `POST /api/auth/forgot-password` | `email` | Sends a reset message and returns `202` |
 | `POST /api/auth/reset-password` | `token`, `newPassword` | Replaces the password and usually revokes sessions |
 

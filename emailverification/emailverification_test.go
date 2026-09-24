@@ -154,6 +154,143 @@ func TestExpiredVerificationTokenIsRejected(t *testing.T) {
 	}
 }
 
+func TestOTPIsSixDigitsAndBoundToTheNormalizedEmail(t *testing.T) {
+	now := time.Date(2026, time.September, 24, 12, 0, 0, 0, time.UTC)
+	store := newMemoryStore(emailverification.User{ID: "user_123", Email: "owner@example.com"})
+	sender := &messageSender{}
+	manager, err := emailverification.NewManager(store, emailverification.Config{
+		Delivery:     emailverification.DeliveryMethodOTP,
+		OTPSecret:    []byte("0123456789abcdef0123456789abcdef"),
+		Lifetime:     10 * time.Minute,
+		Sender:       sender,
+		AttemptGuard: allowAttempts{},
+		Now:          func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("create OTP manager: %v", err)
+	}
+
+	if err := manager.Request(context.Background(), emailverification.RequestInput{
+		Email: " OWNER@Example.COM ",
+	}); err != nil {
+		t.Fatalf("request OTP: %v", err)
+	}
+	if len(sender.messages) != 1 {
+		t.Fatalf("sent messages = %d, want 1", len(sender.messages))
+	}
+	message := sender.messages[0]
+	if len(message.Code) != 6 || message.Token != "" {
+		t.Fatalf("unexpected OTP delivery: code=%q token=%q", message.Code, message.Token)
+	}
+	for _, character := range message.Code {
+		if character < '0' || character > '9' {
+			t.Fatalf("OTP contains non-digit: %q", message.Code)
+		}
+	}
+
+	if _, err := manager.Verify(context.Background(), emailverification.VerifyInput{
+		Email: "other@example.com", Code: message.Code,
+	}); !errors.Is(err, emailverification.ErrInvalidToken) {
+		t.Fatalf("verify OTP for another email: got %v, want invalid token", err)
+	}
+	managerWithWrongSecret, err := emailverification.NewManager(store, emailverification.Config{
+		Delivery:     emailverification.DeliveryMethodOTP,
+		OTPSecret:    []byte("abcdef0123456789abcdef0123456789"),
+		Lifetime:     10 * time.Minute,
+		Sender:       sender,
+		AttemptGuard: allowAttempts{},
+		Now:          func() time.Time { return now },
+	})
+	if err != nil {
+		t.Fatalf("create OTP manager with another secret: %v", err)
+	}
+	if _, err := managerWithWrongSecret.Verify(context.Background(), emailverification.VerifyInput{
+		Email: "owner@example.com", Code: message.Code,
+	}); !errors.Is(err, emailverification.ErrInvalidToken) {
+		t.Fatalf("verify OTP with another secret: got %v, want invalid token", err)
+	}
+	if _, err := manager.Verify(context.Background(), emailverification.VerifyInput{
+		Email: " OWNER@Example.COM ", Code: message.Code,
+	}); err != nil {
+		t.Fatalf("verify OTP: %v", err)
+	}
+}
+
+func TestOTPRequiresAttemptGuard(t *testing.T) {
+	_, err := emailverification.NewManager(
+		newMemoryStore(emailverification.User{}),
+		emailverification.Config{
+			Delivery:  emailverification.DeliveryMethodOTP,
+			OTPSecret: []byte("0123456789abcdef0123456789abcdef"),
+			Lifetime:  10 * time.Minute,
+			Sender:    &messageSender{},
+		},
+	)
+	if !errors.Is(err, emailverification.ErrInvalidConfig) {
+		t.Fatalf("create OTP manager without attempt guard: got %v, want invalid config", err)
+	}
+}
+
+func TestOTPRequiresSecret(t *testing.T) {
+	_, err := emailverification.NewManager(
+		newMemoryStore(emailverification.User{}),
+		emailverification.Config{
+			Delivery:     emailverification.DeliveryMethodOTP,
+			Lifetime:     10 * time.Minute,
+			Sender:       &messageSender{},
+			AttemptGuard: allowAttempts{},
+		},
+	)
+	if !errors.Is(err, emailverification.ErrInvalidConfig) {
+		t.Fatalf("create OTP manager without secret: got %v, want invalid config", err)
+	}
+}
+
+func TestOTPVerificationChecksNormalizedEmailAndSourceBeforeValidation(t *testing.T) {
+	guard := &blockingAttemptGuard{}
+	manager, err := emailverification.NewManager(
+		newMemoryStore(emailverification.User{}),
+		emailverification.Config{
+			Delivery:     emailverification.DeliveryMethodOTP,
+			OTPSecret:    []byte("0123456789abcdef0123456789abcdef"),
+			Lifetime:     10 * time.Minute,
+			Sender:       &messageSender{},
+			AttemptGuard: guard,
+		},
+	)
+	if err != nil {
+		t.Fatalf("create OTP manager: %v", err)
+	}
+
+	_, err = manager.Verify(context.Background(), emailverification.VerifyInput{
+		Email: " OWNER@Example.COM ", Code: "invalid", SourceKey: "203.0.113.10",
+	})
+	if !errors.Is(err, emailverification.ErrAttemptBlocked) {
+		t.Fatalf("verify blocked OTP: got %v, want attempt blocked", err)
+	}
+	if guard.attempt.Operation != emailverification.OperationVerify ||
+		guard.attempt.Email != "owner@example.com" ||
+		guard.attempt.SourceKey != "203.0.113.10" {
+		t.Fatalf("unexpected guarded attempt: %+v", guard.attempt)
+	}
+}
+
+type allowAttempts struct{}
+
+func (allowAttempts) Check(context.Context, emailverification.Attempt) error { return nil }
+
+type blockingAttemptGuard struct {
+	attempt emailverification.Attempt
+}
+
+func (guard *blockingAttemptGuard) Check(
+	_ context.Context,
+	attempt emailverification.Attempt,
+) error {
+	guard.attempt = attempt
+	return emailverification.ErrAttemptBlocked
+}
+
 func newManager(
 	t *testing.T,
 	store emailverification.Store,

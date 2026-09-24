@@ -96,10 +96,17 @@ removal succeeds only when another sign-in method remains.
 
 ## Email verification and password recovery
 
-Both flows email a random, expiring token and store only its hash. Sending a new
-token replaces the earlier one. Email verification consumes the token and marks
-the same email as verified in one storage operation. Password reset consumes
-the token and replaces the password in one storage operation.
+Email verification uses either a random link token or a six-digit email OTP.
+Only a hash is stored. An OTP proof uses an application-managed HMAC secret and
+is bound to the normalized email, so the database alone cannot recover an active
+code and the same short code cannot verify another address. Sending a new
+credential replaces the earlier one. Verification consumes the credential and
+marks the same email as verified in one storage operation. OTP mode requires an
+application-provided attempt guard because short codes need distributed abuse
+protection.
+
+Password recovery emails a random, expiring token and stores only its hash.
+Reset consumes the token and replaces the password in one storage operation.
 
 The public request endpoints return the same response whether an email exists
 or not. Mail senders should hand delivery to a queue quickly.

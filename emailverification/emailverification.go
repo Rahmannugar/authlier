@@ -3,8 +3,12 @@ package emailverification
 
 import (
 	"context"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/sha256"
 	"errors"
 	"fmt"
+	"math/big"
 	"strings"
 	"time"
 
@@ -12,7 +16,11 @@ import (
 	"github.com/Rahmannugar/authlier/token"
 )
 
-const issueAttempts = 3
+const (
+	issueAttempts        = 3
+	otpDigits            = 6
+	minimumOTPSecretSize = 32
+)
 
 var (
 	ErrAlreadyVerified = errors.New("email already verified")
@@ -26,6 +34,13 @@ var (
 )
 
 type TokenHash token.Hash
+
+type DeliveryMethod string
+
+const (
+	DeliveryMethodLink DeliveryMethod = "link"
+	DeliveryMethodOTP  DeliveryMethod = "otp"
+)
 
 type User struct {
 	ID       string
@@ -41,8 +56,8 @@ type Record struct {
 	ExpiresAt time.Time
 }
 
-// Issue replaces the user's earlier token. Verify accepts the current token
-// once before expiry and marks the same email as verified in one storage operation.
+// Issue replaces the user's earlier credential. Verify accepts its current
+// hash once before expiry and marks the same email as verified in one storage operation.
 type Store interface {
 	FindUserByEmail(ctx context.Context, normalizedEmail string) (User, error)
 	Issue(ctx context.Context, record Record) error
@@ -53,6 +68,7 @@ type Message struct {
 	UserID    string
 	Email     string
 	Token     string
+	Code      string
 	URL       string
 	ExpiresAt time.Time
 }
@@ -98,6 +114,8 @@ type SecurityEventSink interface {
 }
 
 type Config struct {
+	Delivery       DeliveryMethod
+	OTPSecret      []byte
 	Lifetime       time.Duration
 	Sender         Sender
 	AttemptGuard   AttemptGuard
@@ -112,6 +130,8 @@ type Manager struct {
 	attemptGuard   AttemptGuard
 	securityEvents SecurityEventSink
 	normalizeEmail emailaddress.Normalizer
+	delivery       DeliveryMethod
+	otpSecret      []byte
 	lifetime       time.Duration
 	now            func() time.Time
 }
@@ -123,6 +143,8 @@ type RequestInput struct {
 
 type VerifyInput struct {
 	Token     string
+	Email     string
+	Code      string
 	SourceKey string
 }
 
@@ -135,6 +157,22 @@ func NewManager(store Store, config Config) (*Manager, error) {
 	}
 	if config.Lifetime <= 0 {
 		return nil, fmt.Errorf("%w: lifetime must be positive", ErrInvalidConfig)
+	}
+	if config.Delivery == "" {
+		config.Delivery = DeliveryMethodLink
+	}
+	if config.Delivery != DeliveryMethodLink && config.Delivery != DeliveryMethodOTP {
+		return nil, fmt.Errorf("%w: delivery method must be link or otp", ErrInvalidConfig)
+	}
+	if config.Delivery == DeliveryMethodOTP && config.AttemptGuard == nil {
+		return nil, fmt.Errorf("%w: attempt guard is required for OTP delivery", ErrInvalidConfig)
+	}
+	if config.Delivery == DeliveryMethodOTP && len(config.OTPSecret) < minimumOTPSecretSize {
+		return nil, fmt.Errorf(
+			"%w: OTP secret must contain at least %d bytes",
+			ErrInvalidConfig,
+			minimumOTPSecretSize,
+		)
 	}
 	normalizeEmail := config.NormalizeEmail
 	if normalizeEmail == nil {
@@ -150,6 +188,8 @@ func NewManager(store Store, config Config) (*Manager, error) {
 		attemptGuard:   config.AttemptGuard,
 		securityEvents: config.SecurityEvents,
 		normalizeEmail: normalizeEmail,
+		delivery:       config.Delivery,
+		otpSecret:      append([]byte(nil), config.OTPSecret...),
 		lifetime:       config.Lifetime,
 		now:            now,
 	}, nil
@@ -186,9 +226,9 @@ func (manager *Manager) Request(ctx context.Context, input RequestInput) error {
 	}
 
 	for range issueAttempts {
-		rawToken, tokenHash, err := token.Generate()
+		credential, tokenHash, err := manager.generateCredential(normalizedEmail)
 		if err != nil {
-			return fmt.Errorf("generate email verification token: %w", err)
+			return fmt.Errorf("generate email verification credential: %w", err)
 		}
 		now := manager.now().UTC()
 		record := Record{
@@ -211,7 +251,8 @@ func (manager *Manager) Request(ctx context.Context, input RequestInput) error {
 		if err := manager.sender.SendVerification(ctx, Message{
 			UserID:    user.ID,
 			Email:     user.Email,
-			Token:     rawToken,
+			Token:     credential.token,
+			Code:      credential.code,
 			ExpiresAt: record.ExpiresAt,
 		}); err != nil {
 			return fmt.Errorf("send email verification message: %w", err)
@@ -223,13 +264,22 @@ func (manager *Manager) Request(ctx context.Context, input RequestInput) error {
 }
 
 func (manager *Manager) Verify(ctx context.Context, input VerifyInput) (User, error) {
+	normalizedEmail := ""
+	if manager.delivery == DeliveryMethodOTP {
+		var err error
+		normalizedEmail, err = manager.normalizeEmail(input.Email)
+		if err != nil || !emailaddress.Valid(normalizedEmail) {
+			normalizedEmail = ""
+		}
+	}
 	if err := manager.checkAttempt(ctx, Attempt{
 		Operation: OperationVerify,
+		Email:     normalizedEmail,
 		SourceKey: input.SourceKey,
 	}); err != nil {
 		return User{}, err
 	}
-	tokenHash, err := token.HashToken(input.Token)
+	tokenHash, err := manager.hashVerificationInput(input, normalizedEmail)
 	if err != nil {
 		manager.record(ctx, EventVerifyFailed, "", input.SourceKey)
 		return User{}, ErrInvalidToken
@@ -247,6 +297,67 @@ func (manager *Manager) Verify(ctx context.Context, input VerifyInput) (User, er
 	}
 	manager.record(ctx, EventVerified, user.ID, input.SourceKey)
 	return user, nil
+}
+
+type credential struct {
+	token string
+	code  string
+}
+
+func (manager *Manager) generateCredential(email string) (credential, token.Hash, error) {
+	if manager.delivery == DeliveryMethodOTP {
+		code, err := generateOTP()
+		if err != nil {
+			return credential{}, token.Hash{}, err
+		}
+		return credential{code: code}, manager.hashOTP(email, code), nil
+	}
+	rawToken, hash, err := token.Generate()
+	return credential{token: rawToken}, hash, err
+}
+
+func (manager *Manager) hashVerificationInput(
+	input VerifyInput,
+	normalizedEmail string,
+) (token.Hash, error) {
+	if manager.delivery == DeliveryMethodOTP {
+		if normalizedEmail == "" || !validOTP(input.Code) {
+			return token.Hash{}, ErrInvalidToken
+		}
+		return manager.hashOTP(normalizedEmail, input.Code), nil
+	}
+	return token.HashToken(input.Token)
+}
+
+func generateOTP() (string, error) {
+	maximum := new(big.Int).Exp(big.NewInt(10), big.NewInt(otpDigits), nil)
+	value, err := rand.Int(rand.Reader, maximum)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("%0*d", otpDigits, value.Int64()), nil
+}
+
+func validOTP(code string) bool {
+	if len(code) != otpDigits {
+		return false
+	}
+	for _, character := range code {
+		if character < '0' || character > '9' {
+			return false
+		}
+	}
+	return true
+}
+
+func (manager *Manager) hashOTP(email, code string) token.Hash {
+	hash := hmac.New(sha256.New, manager.otpSecret)
+	_, _ = hash.Write([]byte(email))
+	_, _ = hash.Write([]byte{0})
+	_, _ = hash.Write([]byte(code))
+	var proof token.Hash
+	copy(proof[:], hash.Sum(nil))
+	return proof
 }
 
 func (manager *Manager) IsVerified(ctx context.Context, email string) (bool, error) {

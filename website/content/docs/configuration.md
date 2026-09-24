@@ -208,6 +208,12 @@ provider credentials, WebAuthn settings, or organization connections. Each
 authentication guide explains what the application must provide and shows a
 complete configuration.
 
+Email verification uses one-time links by default. Set
+`Delivery: emailverification.DeliveryMethodOTP` for six-digit email codes. OTP
+mode requires a 32-byte application-managed `OTPSecret` and an `AttemptGuard`;
+see [Email verification](/docs/email-verification) for the complete
+configuration and route contract.
+
 ## Trusted proxies
 
 Authlier uses a request source key for attempt guards and security events. Add

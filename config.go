@@ -36,6 +36,8 @@ type EmailAndPasswordConfig struct {
 
 type EmailVerificationConfig struct {
 	Enabled                     bool
+	Delivery                    emailverification.DeliveryMethod
+	OTPSecret                   []byte
 	Lifetime                    time.Duration
 	VerificationURL             string
 	Sender                      emailverification.Sender

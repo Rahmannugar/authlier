@@ -148,6 +148,85 @@ func TestRequiredEmailVerificationControlsSessionCreation(t *testing.T) {
 	}
 }
 
+func TestRequiredEmailOTPVerificationControlsSessionCreation(t *testing.T) {
+	accounts := &authenticationStore{}
+	sender := &verificationSender{}
+	sessions := newSessionStore(time.Now().UTC())
+	database := handlerDatabase{stores: Stores{
+		EmailPassword:     accounts,
+		EmailVerification: accounts,
+		Sessions:          sessions,
+	}}
+	auth, err := New(Config{
+		AppName: "Acme", BaseURL: "https://app.example.com", Database: database,
+		EmailAndPassword: EmailAndPasswordConfig{
+			Enabled: true, RequireEmailVerification: true,
+		},
+		EmailVerification: EmailVerificationConfig{
+			Enabled:                     true,
+			Delivery:                    emailverification.DeliveryMethodOTP,
+			OTPSecret:                   []byte("0123456789abcdef0123456789abcdef"),
+			Sender:                      sender,
+			SendOnSignUp:                true,
+			AutoSignInAfterVerification: true,
+			AttemptGuard:                allowVerificationAttempts{},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create Authlier with email OTP: %v", err)
+	}
+
+	response := httptest.NewRecorder()
+	auth.Handler().ServeHTTP(response, newAuthRequest(
+		"/api/auth/sign-up/email",
+		`{"email":"owner@example.com","password":"correct horse battery staple"}`,
+	))
+	if response.Code != http.StatusCreated || len(sender.code) != 6 || sender.token != "" ||
+		sender.url != "" || sessions.created != 0 {
+		t.Fatalf(
+			"sign up: status=%d code=%q token=%q url=%q sessions=%d",
+			response.Code, sender.code, sender.token, sender.url, sessions.created,
+		)
+	}
+
+	response = httptest.NewRecorder()
+	auth.Handler().ServeHTTP(response, newAuthRequest(
+		"/api/auth/verify-email",
+		`{"email":"owner@example.com","code":"`+sender.code+`"}`,
+	))
+	if response.Code != http.StatusOK || sessions.created != 1 {
+		t.Fatalf("verify OTP: status=%d sessions=%d body=%s", response.Code, sessions.created, response.Body.String())
+	}
+}
+
+func TestEmailOTPVerificationRejectsGETRoute(t *testing.T) {
+	accounts := &authenticationStore{}
+	auth, err := New(Config{
+		AppName: "Acme", BaseURL: "https://app.example.com",
+		Database: handlerDatabase{stores: Stores{
+			EmailPassword: accounts, EmailVerification: accounts,
+			Sessions: newSessionStore(time.Now().UTC()),
+		}},
+		EmailAndPassword: EmailAndPasswordConfig{Enabled: true},
+		EmailVerification: EmailVerificationConfig{
+			Enabled: true, Delivery: emailverification.DeliveryMethodOTP,
+			OTPSecret: []byte("0123456789abcdef0123456789abcdef"),
+			Sender:    &verificationSender{}, AttemptGuard: allowVerificationAttempts{},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create Authlier with email OTP: %v", err)
+	}
+	response := httptest.NewRecorder()
+	auth.Handler().ServeHTTP(
+		response,
+		httptest.NewRequest(http.MethodGet, "/api/auth/verify-email?token=unused", nil),
+	)
+	if response.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET OTP verification status = %d, want %d", response.Code, http.StatusMethodNotAllowed)
+	}
+}
+
 func TestConfiguredBcryptHashesNewPasswords(t *testing.T) {
 	accounts := &authenticationStore{}
 	database := handlerDatabase{stores: Stores{
@@ -352,6 +431,7 @@ func (store *verificationStore) Verify(
 
 type verificationSender struct {
 	token string
+	code  string
 	url   string
 }
 
@@ -360,9 +440,14 @@ func (sender *verificationSender) SendVerification(
 	message emailverification.Message,
 ) error {
 	sender.token = message.Token
+	sender.code = message.Code
 	sender.url = message.URL
 	return nil
 }
+
+type allowVerificationAttempts struct{}
+
+func (allowVerificationAttempts) Check(context.Context, emailverification.Attempt) error { return nil }
 
 type resetStore struct {
 	user         passwordreset.User

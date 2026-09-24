@@ -12,6 +12,11 @@ type emailRequest struct {
 	Email string `json:"email"`
 }
 
+type verifyEmailOTPRequest struct {
+	Email string `json:"email"`
+	Code  string `json:"code"`
+}
+
 type resetPasswordRequest struct {
 	Token       string `json:"token"`
 	NewPassword string `json:"newPassword"`
@@ -19,7 +24,11 @@ type resetPasswordRequest struct {
 
 func registerEmailVerificationRoutes(handler *httpHandler, basePath string) {
 	handler.mux.HandleFunc("POST "+basePath+"/send-verification-email", handler.sendVerificationEmail)
-	handler.mux.HandleFunc("GET "+basePath+"/verify-email", handler.verifyEmail)
+	if handler.auth.emailVerificationDelivery == emailverification.DeliveryMethodOTP {
+		handler.mux.HandleFunc("POST "+basePath+"/verify-email", handler.verifyEmailOTP)
+	} else {
+		handler.mux.HandleFunc("GET "+basePath+"/verify-email", handler.verifyEmailLink)
+	}
 }
 
 func registerPasswordResetRoutes(handler *httpHandler, basePath string) {
@@ -41,15 +50,33 @@ func (handler *httpHandler) sendVerificationEmail(response http.ResponseWriter, 
 	response.WriteHeader(http.StatusAccepted)
 }
 
-func (handler *httpHandler) verifyEmail(response http.ResponseWriter, request *http.Request) {
+func (handler *httpHandler) verifyEmailLink(response http.ResponseWriter, request *http.Request) {
 	token := request.URL.Query().Get("token")
 	if token == "" {
 		writeError(response, http.StatusBadRequest, "invalid_request")
 		return
 	}
-	user, err := handler.auth.emailVerification.Verify(request.Context(), emailverification.VerifyInput{
+	handler.completeEmailVerification(response, request, emailverification.VerifyInput{
 		Token: token, SourceKey: handler.sourceKey(request),
 	})
+}
+
+func (handler *httpHandler) verifyEmailOTP(response http.ResponseWriter, request *http.Request) {
+	var input verifyEmailOTPRequest
+	if !readJSON(response, request, &input) {
+		return
+	}
+	handler.completeEmailVerification(response, request, emailverification.VerifyInput{
+		Email: input.Email, Code: input.Code, SourceKey: handler.sourceKey(request),
+	})
+}
+
+func (handler *httpHandler) completeEmailVerification(
+	response http.ResponseWriter,
+	request *http.Request,
+	input emailverification.VerifyInput,
+) {
+	user, err := handler.auth.emailVerification.Verify(request.Context(), input)
 	if err != nil {
 		writeEmailVerificationError(response, err)
 		return
