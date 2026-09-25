@@ -47,7 +47,7 @@ Authlier's default `BasePath` is `/api/auth`, so the configuration above creates
 routes such as:
 
 ```text
-https://server.example.com/api/auth/sign-in/email
+https://server.example.com/api/auth/sign-in
 ```
 
 Set `BasePath` when a different prefix fits the server better. For example, an
@@ -67,11 +67,16 @@ auth, err := authlier.New(authlier.Config{
 http.Handle("/auth/", auth.Handler())
 ```
 
-Email sign-in is now
-`https://api.example.com/auth/sign-in/email`. `BasePath` must begin with `/`
-and must not end with `/`. Mount the handler at the same prefix. The trailing
-slash in `http.Handle("/auth/", ...)` is Go's subtree-matching syntax; it is not
-part of `BasePath`.
+Email sign-in is now `https://api.example.com/auth/sign-in`. `BasePath` must
+begin with `/` and must not end with `/`. Mount the handler at the same prefix.
+The trailing slash in `http.Handle("/auth/", ...)` is Go's subtree-matching
+syntax; it is not part of `BasePath`.
+
+Google account linking and unlinking use `AccountBasePath`, which defaults to
+`/api/account`. Set it when the application exposes account settings beneath a
+different prefix. `AccountBasePath` follows the same slash rules as `BasePath`.
+When Google authentication is enabled, the two paths must differ because both
+expose a `POST /google` route.
 
 The examples use Go's standard `net/http` package, not a third-party mux. Any
 router that accepts an `http.Handler` can mount the same Authlier handler.

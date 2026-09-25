@@ -27,7 +27,7 @@ func TestSessionRoutesListAndRevokeTheCurrentSessionByID(t *testing.T) {
 
 	signUp := httptest.NewRecorder()
 	auth.Handler().ServeHTTP(signUp, newAuthRequest(
-		"/api/auth/sign-up/email",
+		"/api/auth/sign-up",
 		`{"email":"owner@example.com","password":"correct horse battery staple"}`,
 	))
 	cookies := signUp.Result().Cookies()

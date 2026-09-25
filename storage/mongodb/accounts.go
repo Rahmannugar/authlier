@@ -334,6 +334,19 @@ func (store *GoogleStore) ResolveIdentity(ctx context.Context, resolution google
 			} else if err != nil {
 				return err
 			}
+			// Updating the user document serializes concurrent link attempts. Read
+			// after that lock so the account keeps at most one Google identity.
+			var existingIdentity googleIdentityDocument
+			err = store.adapter.collection(googleIdentitiesCollection).FindOne(
+				tx,
+				bson.M{"user_id": userID},
+			).Decode(&existingIdentity)
+			if err == nil {
+				return googleoauth.ErrConflict
+			}
+			if !errors.Is(err, mongo.ErrNoDocuments) {
+				return err
+			}
 		} else {
 			var existing userDocument
 			err = store.adapter.collection(usersCollection).FindOne(tx, bson.M{"email": resolution.Email}).Decode(&existing)
@@ -367,7 +380,7 @@ func (store *GoogleStore) ResolveIdentity(ctx context.Context, resolution google
 	return user, err
 }
 
-func (store *GoogleStore) UnlinkIdentity(ctx context.Context, subjectID, providerSubject string, _ time.Time) error {
+func (store *GoogleStore) UnlinkIdentity(ctx context.Context, subjectID string, _ time.Time) error {
 	return store.adapter.transaction(ctx, func(tx context.Context) error {
 		if _, err := store.adapter.lockUser(tx, subjectID); errors.Is(err, mongo.ErrNoDocuments) {
 			return googleoauth.ErrNotFound
@@ -375,7 +388,7 @@ func (store *GoogleStore) UnlinkIdentity(ctx context.Context, subjectID, provide
 			return err
 		}
 		var identity googleIdentityDocument
-		if err := store.adapter.collection(googleIdentitiesCollection).FindOne(tx, bson.M{"_id": providerSubject, "user_id": subjectID}).Decode(&identity); errors.Is(err, mongo.ErrNoDocuments) {
+		if err := store.adapter.collection(googleIdentitiesCollection).FindOne(tx, bson.M{"user_id": subjectID}).Decode(&identity); errors.Is(err, mongo.ErrNoDocuments) {
 			return googleoauth.ErrNotFound
 		} else if err != nil {
 			return err
@@ -388,46 +401,12 @@ func (store *GoogleStore) UnlinkIdentity(ctx context.Context, subjectID, provide
 		if err != nil {
 			return err
 		}
-		otherGoogleIdentities, err := store.adapter.collection(googleIdentitiesCollection).CountDocuments(tx, bson.M{
-			"user_id": subjectID, "_id": bson.M{"$ne": providerSubject},
-		})
-		if err != nil {
-			return err
-		}
-		if passwords+passkeys+otherGoogleIdentities == 0 {
+		if passwords+passkeys == 0 {
 			return googleoauth.ErrLastCredential
 		}
-		_, err = store.adapter.collection(googleIdentitiesCollection).DeleteOne(tx, bson.M{"_id": providerSubject, "user_id": subjectID})
+		_, err = store.adapter.collection(googleIdentitiesCollection).DeleteOne(tx, bson.M{"user_id": subjectID})
 		return err
 	})
-}
-
-func (store *GoogleStore) ListIdentities(
-	ctx context.Context,
-	subjectID string,
-) ([]googleoauth.LinkedIdentity, error) {
-	cursor, err := store.adapter.collection(googleIdentitiesCollection).Find(
-		ctx,
-		bson.M{"user_id": subjectID},
-		options.Find().SetSort(bson.D{{Key: "linked_at", Value: 1}}),
-	)
-	if err != nil {
-		return nil, err
-	}
-	defer cursor.Close(ctx)
-	identities := make([]googleoauth.LinkedIdentity, 0)
-	for cursor.Next(ctx) {
-		var document googleIdentityDocument
-		if err := cursor.Decode(&document); err != nil {
-			return nil, err
-		}
-		identities = append(identities, googleoauth.LinkedIdentity{
-			ProviderSubject: document.ProviderSubject,
-			Email:           document.Email,
-			LinkedAt:        document.LinkedAt,
-		})
-	}
-	return identities, cursor.Err()
 }
 
 func newUserDocument(email string, verified bool, createdAt time.Time) (userDocument, error) {

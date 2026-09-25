@@ -116,7 +116,7 @@ earlier code, and successful verification consumes the current code atomically.
 
 ## Routes
 
-- `POST /api/auth/send-verification-email` accepts `{"email":"..."}` and
+- `POST /api/auth/resend-verification` accepts `{"email":"..."}` and
   returns `202 Accepted`.
 - Link mode registers `GET /api/auth/verify-email?token=...`.
 - OTP mode registers `POST /api/auth/verify-email` with `email` and `code`.

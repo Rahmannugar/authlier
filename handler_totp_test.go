@@ -42,7 +42,7 @@ func TestPasswordSignInWaitsForTOTPBeforeCreatingSession(t *testing.T) {
 
 	response := httptest.NewRecorder()
 	auth.Handler().ServeHTTP(response, newAuthRequest(
-		"/api/auth/sign-up/email",
+		"/api/auth/sign-up",
 		`{"email":"owner@example.com","password":"correct horse battery staple"}`,
 	))
 	if response.Code != http.StatusCreated || sessions.created != 1 {
@@ -52,7 +52,7 @@ func TestPasswordSignInWaitsForTOTPBeforeCreatingSession(t *testing.T) {
 
 	response = httptest.NewRecorder()
 	auth.Handler().ServeHTTP(response, newAuthRequest(
-		"/api/auth/sign-in/email",
+		"/api/auth/sign-in",
 		`{"email":"owner@example.com","password":"correct horse battery staple"}`,
 	))
 	if response.Code != http.StatusOK || sessions.created != 1 {

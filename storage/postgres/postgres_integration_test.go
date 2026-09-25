@@ -85,7 +85,7 @@ func TestPostgresAdapter(t *testing.T) {
 			t.Fatalf("configure Authlier: %v", err)
 		}
 
-		signUp := httptest.NewRequest(http.MethodPost, "/api/auth/sign-up/email",
+		signUp := httptest.NewRequest(http.MethodPost, "/api/auth/sign-up",
 			bytes.NewBufferString(`{"email":"new@example.com","password":"correct horse battery staple"}`))
 		signUp.Header.Set("Origin", "https://app.example.com")
 		signUpResponse := httptest.NewRecorder()

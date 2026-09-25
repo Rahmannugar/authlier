@@ -5,7 +5,6 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
-	"slices"
 	"time"
 
 	"github.com/Rahmannugar/authlier/emailpassword"
@@ -416,6 +415,15 @@ func (store *GoogleStore) ResolveIdentity(ctx context.Context, resolution google
 			} else if err != nil {
 				return err
 			}
+			// The watched subject set turns concurrent link attempts into a retry.
+			// A retried operation sees the first identity and rejects the second.
+			linkedCount, err := tx.SCard(ctx, store.adapter.key("google:subject:"+userID)).Result()
+			if err != nil {
+				return err
+			}
+			if linkedCount != 0 {
+				return googleoauth.ErrConflict
+			}
 		} else {
 			if exists, err := tx.HExists(ctx, emails, resolution.Email).Result(); err != nil {
 				return err
@@ -448,7 +456,7 @@ func (store *GoogleStore) ResolveIdentity(ctx context.Context, resolution google
 	return result, err
 }
 
-func (store *GoogleStore) UnlinkIdentity(ctx context.Context, subjectID, providerSubject string, _ time.Time) error {
+func (store *GoogleStore) UnlinkIdentity(ctx context.Context, subjectID string, _ time.Time) error {
 	users, identities := store.adapter.key("users"), store.adapter.key("google-identities")
 	googleSet := store.adapter.key("google:subject:" + subjectID)
 	passwords, passkeys := store.adapter.key("passwords"), store.adapter.key("passkeys:subject:"+subjectID)
@@ -458,6 +466,17 @@ func (store *GoogleStore) UnlinkIdentity(ctx context.Context, subjectID, provide
 		} else if !exists {
 			return googleoauth.ErrNotFound
 		}
+		providerSubjects, err := tx.SMembers(ctx, googleSet).Result()
+		if err != nil {
+			return err
+		}
+		if len(providerSubjects) == 0 {
+			return googleoauth.ErrNotFound
+		}
+		if len(providerSubjects) != 1 {
+			return googleoauth.ErrConflict
+		}
+		providerSubject := providerSubjects[0]
 		var identity googleIdentityRecord
 		if err := readJSON(ctx, tx, identities, providerSubject, &identity); errors.Is(err, redislibrary.Nil) {
 			return googleoauth.ErrNotFound
@@ -474,11 +493,7 @@ func (store *GoogleStore) UnlinkIdentity(ctx context.Context, subjectID, provide
 		if err != nil {
 			return err
 		}
-		googleCount, err := tx.SCard(ctx, googleSet).Result()
-		if err != nil {
-			return err
-		}
-		if !passwordCount && passkeyCount+googleCount <= 1 {
+		if !passwordCount && passkeyCount == 0 {
 			return googleoauth.ErrLastCredential
 		}
 		_, err = tx.TxPipelined(ctx, func(pipe redislibrary.Pipeliner) error {
@@ -488,43 +503,6 @@ func (store *GoogleStore) UnlinkIdentity(ctx context.Context, subjectID, provide
 		})
 		return err
 	})
-}
-
-func (store *GoogleStore) ListIdentities(
-	ctx context.Context,
-	subjectID string,
-) ([]googleoauth.LinkedIdentity, error) {
-	providerSubjects, err := store.adapter.client.SMembers(
-		ctx, store.adapter.key("google:subject:"+subjectID),
-	).Result()
-	if err != nil || len(providerSubjects) == 0 {
-		return []googleoauth.LinkedIdentity{}, err
-	}
-	values, err := store.adapter.client.HMGet(
-		ctx, store.adapter.key("google-identities"), providerSubjects...,
-	).Result()
-	if err != nil {
-		return nil, err
-	}
-	identities := make([]googleoauth.LinkedIdentity, 0, len(values))
-	for _, value := range values {
-		if value == nil {
-			continue
-		}
-		var identity googleIdentityRecord
-		if err := decodeRedisValue(value, &identity); err != nil {
-			return nil, err
-		}
-		identities = append(identities, googleoauth.LinkedIdentity{
-			ProviderSubject: identity.ProviderSubject,
-			Email:           identity.Email,
-			LinkedAt:        identity.LinkedAt,
-		})
-	}
-	slices.SortFunc(identities, func(left, right googleoauth.LinkedIdentity) int {
-		return left.LinkedAt.Compare(right.LinkedAt)
-	})
-	return identities, nil
 }
 
 func newUserRecord(email string, verified bool, createdAt time.Time) (userRecord, error) {

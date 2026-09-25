@@ -109,8 +109,18 @@ func New(config Config) (*Auth, error) {
 	if basePath == "" {
 		basePath = "/api/auth"
 	}
-	if !strings.HasPrefix(basePath, "/") || strings.HasSuffix(basePath, "/") {
+	if !validBasePath(basePath) {
 		return nil, fmt.Errorf("%w: base path must start but not end with a slash", ErrInvalidConfig)
+	}
+	accountBasePath := strings.TrimSpace(config.AccountBasePath)
+	if accountBasePath == "" {
+		accountBasePath = "/api/account"
+	}
+	if !validBasePath(accountBasePath) {
+		return nil, fmt.Errorf("%w: account base path must start but not end with a slash", ErrInvalidConfig)
+	}
+	if config.Google.Enabled && accountBasePath == basePath {
+		return nil, fmt.Errorf("%w: account base path must differ from base path", ErrInvalidConfig)
 	}
 	if config.Session.FreshAge <= 0 {
 		return nil, fmt.Errorf("%w: session fresh age must be positive", ErrInvalidConfig)
@@ -254,7 +264,7 @@ func New(config Config) (*Auth, error) {
 		}
 		redirectURL := strings.TrimSpace(config.Google.RedirectURL)
 		if redirectURL == "" {
-			redirectURL = baseURL.Scheme + "://" + baseURL.Host + basePath + "/callback/google"
+			redirectURL = baseURL.Scheme + "://" + baseURL.Host + basePath + "/google/callback"
 		}
 		auth.google, err = googleoauth.NewManager(stores.Google, provider, googleoauth.Config{
 			ClientID:         config.Google.ClientID,
@@ -373,12 +383,16 @@ func New(config Config) (*Auth, error) {
 			return nil, err
 		}
 	}
-	handler, err := newHandler(auth, config, baseURL, basePath)
+	handler, err := newHandler(auth, config, baseURL, basePath, accountBasePath)
 	if err != nil {
 		return nil, err
 	}
 	auth.handler = handler
 	return auth, nil
+}
+
+func validBasePath(path string) bool {
+	return strings.HasPrefix(path, "/") && !strings.HasSuffix(path, "/")
 }
 
 func configuredPasswordValidator(config EmailAndPasswordConfig) emailpassword.PasswordValidator {

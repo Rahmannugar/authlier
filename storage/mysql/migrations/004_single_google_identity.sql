@@ -1,0 +1,2 @@
+CREATE UNIQUE INDEX authlier_google_identities_user_unique
+ON authlier_google_identities(user_id);

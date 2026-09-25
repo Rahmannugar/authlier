@@ -72,7 +72,13 @@ type errorDetails struct {
 	Code string `json:"code"`
 }
 
-func newHandler(auth *Auth, config Config, baseURL *url.URL, basePath string) (http.Handler, error) {
+func newHandler(
+	auth *Auth,
+	config Config,
+	baseURL *url.URL,
+	basePath string,
+	accountBasePath string,
+) (http.Handler, error) {
 	sessionMode := config.Session.Mode
 	if sessionMode == "" {
 		sessionMode = SessionModeCookie
@@ -122,8 +128,8 @@ func newHandler(auth *Auth, config Config, baseURL *url.URL, basePath string) (h
 		mux:         http.NewServeMux(),
 	}
 	if auth.password != nil {
-		handler.mux.HandleFunc("POST "+basePath+"/sign-up/email", handler.signUp)
-		handler.mux.HandleFunc("POST "+basePath+"/sign-in/email", handler.signIn)
+		handler.mux.HandleFunc("POST "+basePath+"/sign-up", handler.signUp)
+		handler.mux.HandleFunc("POST "+basePath+"/sign-in", handler.signIn)
 		registerAccountRoutes(handler, basePath)
 	}
 	handler.mux.HandleFunc("POST "+basePath+"/sign-out", handler.signOut)
@@ -145,7 +151,7 @@ func newHandler(auth *Auth, config Config, baseURL *url.URL, basePath string) (h
 		registerPasskeyRoutes(handler, basePath)
 	}
 	if auth.google != nil {
-		registerGoogleRoutes(handler, basePath)
+		registerGoogleRoutes(handler, basePath, accountBasePath)
 	}
 	if auth.oidc != nil || auth.saml != nil {
 		registerSSORoutes(handler, basePath)
@@ -172,7 +178,7 @@ func (handler *httpHandler) ServeHTTP(response http.ResponseWriter, request *htt
 			allowedHeaders += ", Authorization"
 		}
 		response.Header().Set("Access-Control-Allow-Headers", allowedHeaders)
-		response.Header().Set("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+		response.Header().Set("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
 		response.WriteHeader(http.StatusNoContent)
 		return
 	}

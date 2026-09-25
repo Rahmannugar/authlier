@@ -4,9 +4,10 @@ description: Reference the routes added by Authlier's standard handler.
 icon: List
 ---
 
-The examples use the default `/api/auth` base path. Changing `Config.BasePath`
-changes the prefix for every route. Authlier only registers routes for enabled
-features, except session routes, which are always available.
+The examples use the default `/api/auth` authentication base path and
+`/api/account` account base path. Change them with `Config.BasePath` and
+`Config.AccountBasePath`. Authlier only registers routes for enabled features,
+except session routes, which are always available.
 
 ## Common response rules
 
@@ -26,8 +27,8 @@ mode may omit `Origin`.
 
 | Route | Request | Result |
 | --- | --- | --- |
-| `POST /api/auth/sign-up/email` | `email`, `password` | Creates the user and usually a session |
-| `POST /api/auth/sign-in/email` | `email`, `password` | Creates a session or returns a TOTP challenge |
+| `POST /api/auth/sign-up` | `email`, `password` | Creates the user and usually a session |
+| `POST /api/auth/sign-in` | `email`, `password` | Creates a session or returns a TOTP challenge |
 | `POST /api/auth/change-password` | `currentPassword`, `newPassword`, `revokeOtherSessions` | Replaces the current password |
 | `POST /api/auth/set-password` | `password` | Adds a password to an authenticated account |
 | `POST /api/auth/remove-password` | `currentPassword` | Removes the password when another sign-in method remains |
@@ -36,7 +37,7 @@ mode may omit `Origin`.
 
 | Route | Request | Result |
 | --- | --- | --- |
-| `POST /api/auth/send-verification-email` | `email` | Sends a verification message and returns `202` |
+| `POST /api/auth/resend-verification` | `email` | Sends a verification message and returns `202` |
 | `GET /api/auth/verify-email?token=...` | Query token in link mode | Verifies the email |
 | `POST /api/auth/verify-email` | `email`, `code` in OTP mode | Verifies the email |
 | `POST /api/auth/forgot-password` | `email` | Sends a reset message and returns `202` |
@@ -65,11 +66,10 @@ Authentication and refresh responses include the `tokens` object described in
 
 | Route | Request | Result |
 | --- | --- | --- |
-| `POST /api/auth/sign-in/google` | Empty body | Returns the Google authorization URL |
-| `GET /api/auth/callback/google` | Provider query | Validates the callback and creates a session |
-| `POST /api/auth/link-account/google` | Session cookie | Returns an authorization URL for account linking |
-| `GET /api/auth/list-accounts/google` | Session cookie | Lists linked Google identities |
-| `POST /api/auth/unlink-account/google` | `providerSubject` | Removes one linked Google identity |
+| `POST /api/auth/google` | Empty body | Returns the Google authorization URL |
+| `GET /api/auth/google/callback` | Provider query | Validates the callback and creates a session |
+| `POST /api/account/google` | Session cookie | Returns an authorization URL for account linking |
+| `DELETE /api/account/google` | Session cookie | Removes the linked Google identity when another sign-in method remains |
 
 ## TOTP
 

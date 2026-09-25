@@ -23,7 +23,7 @@ Create an OAuth 2.0 web application in Google Cloud. Register this authorized
 redirect URI:
 
 ```text
-https://server.example.com/api/auth/callback/google
+https://server.example.com/api/auth/google/callback
 ```
 
 Use the Go server's public origin and the configured Authlier base path. This
@@ -49,7 +49,7 @@ another callback.
 ## Start sign-in
 
 ```ts
-const response = await fetch('/api/auth/sign-in/google', { method: 'POST' });
+const response = await fetch('/api/auth/google', { method: 'POST' });
 const { url } = await response.json();
 window.location.assign(url);
 ```
@@ -70,14 +70,11 @@ Changing the Google account's email address does not break the link.
 ## Link and unlink
 
 An already authenticated user starts linking with
-`POST /api/auth/link-account/google`. This requires a recent session. List the
-linked accounts with `GET /api/auth/list-accounts/google`, then unlink one with:
+`POST /api/account/google`. This requires a recent session. Each user may link
+one Google identity. Unlink it with:
 
 ```http
-POST /api/auth/unlink-account/google
-Content-Type: application/json
-
-{"providerSubject":"Google sub value"}
+DELETE /api/account/google
 ```
 
 Authlier refuses to unlink the account's last sign-in method.

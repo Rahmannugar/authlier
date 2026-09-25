@@ -47,7 +47,7 @@ func TestBearerSessionsSupportNativeClientsAndRefreshReuseRevocation(t *testing.
 
 	signUpRequest := httptest.NewRequest(
 		http.MethodPost,
-		"/api/auth/sign-up/email",
+		"/api/auth/sign-up",
 		bytes.NewBufferString(`{"email":"owner@example.com","password":"correct horse battery staple"}`),
 	)
 	signUp := httptest.NewRecorder()
@@ -133,7 +133,7 @@ func TestBearerSessionsRejectUntrustedBrowserOriginsAndAllowAuthorizationPreflig
 
 	untrusted := httptest.NewRequest(
 		http.MethodPost,
-		"/api/auth/sign-in/email",
+		"/api/auth/sign-in",
 		bytes.NewBufferString(`{"email":"owner@example.com","password":"password"}`),
 	)
 	untrusted.Header.Set("Origin", "https://malicious.example")

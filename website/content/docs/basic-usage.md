@@ -10,7 +10,7 @@ This guide continues from the Go server created in
 
 There are two kinds of routes in that server:
 
-- The browser calls Authlier routes such as `/api/auth/sign-in/email` to create,
+- The browser calls Authlier routes such as `/api/auth/sign-in` to create,
   inspect, and end a session.
 - The browser calls your application routes for the product itself. Those Go
   handlers use `auth.ResolveSession(request)` when they need an authenticated
@@ -74,7 +74,7 @@ function authRequest(path: string, init: RequestInit = {}) {
 ## Create an account
 
 ```ts
-const response = await authRequest('/sign-up/email', {
+const response = await authRequest('/sign-up', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({
@@ -98,7 +98,7 @@ to the Go server.
 ## Sign in
 
 ```ts
-const response = await authRequest('/sign-in/email', {
+const response = await authRequest('/sign-in', {
   method: 'POST',
   headers: { 'Content-Type': 'application/json' },
   body: JSON.stringify({ email, password }),

@@ -79,14 +79,14 @@ compatibility without weakening credentials that already use Argon2id.
 ## Sign up and sign in
 
 ```http
-POST /api/auth/sign-up/email
+POST /api/auth/sign-up
 Content-Type: application/json
 
 {"email":"person@example.com","password":"correct horse battery staple"}
 ```
 
 ```http
-POST /api/auth/sign-in/email
+POST /api/auth/sign-in
 Content-Type: application/json
 
 {"email":"person@example.com","password":"correct horse battery staple"}

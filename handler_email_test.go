@@ -33,7 +33,7 @@ func TestEmailVerificationRoutesCompleteTheIssuedToken(t *testing.T) {
 	}
 	handler := newEmailHandler(t, manager, nil, newSessionStore(now))
 
-	request := newAuthRequest("/api/auth/send-verification-email", `{"email":"owner@example.com"}`)
+	request := newAuthRequest("/api/auth/resend-verification", `{"email":"owner@example.com"}`)
 	response := httptest.NewRecorder()
 	handler.ServeHTTP(response, request)
 	if response.Code != http.StatusAccepted || sender.token == "" {
@@ -120,7 +120,7 @@ func TestRequiredEmailVerificationControlsSessionCreation(t *testing.T) {
 
 	response := httptest.NewRecorder()
 	auth.Handler().ServeHTTP(response, newAuthRequest(
-		"/api/auth/sign-up/email",
+		"/api/auth/sign-up",
 		`{"email":"owner@example.com","password":"correct horse battery staple"}`,
 	))
 	if response.Code != http.StatusCreated || sender.token == "" ||
@@ -131,7 +131,7 @@ func TestRequiredEmailVerificationControlsSessionCreation(t *testing.T) {
 
 	response = httptest.NewRecorder()
 	auth.Handler().ServeHTTP(response, newAuthRequest(
-		"/api/auth/sign-in/email",
+		"/api/auth/sign-in",
 		`{"email":"owner@example.com","password":"correct horse battery staple"}`,
 	))
 	if response.Code != http.StatusForbidden || sessions.created != 0 {
@@ -178,7 +178,7 @@ func TestRequiredEmailOTPVerificationControlsSessionCreation(t *testing.T) {
 
 	response := httptest.NewRecorder()
 	auth.Handler().ServeHTTP(response, newAuthRequest(
-		"/api/auth/sign-up/email",
+		"/api/auth/sign-up",
 		`{"email":"owner@example.com","password":"correct horse battery staple"}`,
 	))
 	if response.Code != http.StatusCreated || len(sender.code) != 6 || sender.token != "" ||
@@ -249,7 +249,7 @@ func TestConfiguredBcryptHashesNewPasswords(t *testing.T) {
 
 	response := httptest.NewRecorder()
 	auth.Handler().ServeHTTP(response, newAuthRequest(
-		"/api/auth/sign-up/email",
+		"/api/auth/sign-up",
 		`{"email":"owner@example.com","password":"correct horse battery staple"}`,
 	))
 	if response.Code != http.StatusCreated {
@@ -287,7 +287,7 @@ func TestConfiguredBcryptRejectsPasswordsBeyondItsInputLimit(t *testing.T) {
 
 	response := httptest.NewRecorder()
 	auth.Handler().ServeHTTP(response, newAuthRequest(
-		"/api/auth/sign-up/email",
+		"/api/auth/sign-up",
 		`{"email":"owner@example.com","password":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}`,
 	))
 	if response.Code != http.StatusBadRequest || accounts.user.ID != "" ||
@@ -381,7 +381,7 @@ func newEmailHandler(
 	if err != nil {
 		t.Fatalf("parse base URL: %v", err)
 	}
-	handler, err := newHandler(auth, Config{}, baseURL, "/api/auth")
+	handler, err := newHandler(auth, Config{}, baseURL, "/api/auth", "/api/account")
 	if err != nil {
 		t.Fatalf("create HTTP handler: %v", err)
 	}
