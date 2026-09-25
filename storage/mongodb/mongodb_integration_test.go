@@ -90,7 +90,7 @@ func TestMongoDBAdapter(t *testing.T) {
 		if err != nil {
 			t.Fatalf("configure Authlier: %v", err)
 		}
-		signUp := httptest.NewRequest(http.MethodPost, "/api/auth/sign-up/email", bytes.NewBufferString(`{"email":"new@example.com","password":"correct horse battery staple"}`))
+		signUp := httptest.NewRequest(http.MethodPost, "/api/auth/sign-up", bytes.NewBufferString(`{"email":"new@example.com","password":"correct horse battery staple"}`))
 		signUp.Header.Set("Origin", "https://app.example.com")
 		response := httptest.NewRecorder()
 		configured.Handler().ServeHTTP(response, signUp)
@@ -163,6 +163,14 @@ func TestMongoDBAdapter(t *testing.T) {
 		second, err := adapter.Google().ResolveIdentity(ctx, googleoauth.IdentityResolution{ProviderSubject: "google-account-id", Email: "changed@example.com"})
 		if err != nil || second.ID != first.ID {
 			t.Fatalf("resolved user=%#v err=%v, want subject %q", second, err, first.ID)
+		}
+		_, err = adapter.Google().ResolveIdentity(ctx, googleoauth.IdentityResolution{
+			ProviderSubject: "different-google-account",
+			Email:           "other@example.com",
+			SubjectID:       first.ID,
+		})
+		if !errors.Is(err, googleoauth.ErrConflict) {
+			t.Fatalf("linking a second Google identity error = %v", err)
 		}
 	})
 

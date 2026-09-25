@@ -26,7 +26,7 @@ func TestChangePasswordCanRevokeOtherSessionsAndKeepTheUserSignedIn(t *testing.T
 
 	signUp := httptest.NewRecorder()
 	auth.Handler().ServeHTTP(signUp, newAuthRequest(
-		"/api/auth/sign-up/email",
+		"/api/auth/sign-up",
 		`{"email":"owner@example.com","password":"original password"}`,
 	))
 	if signUp.Code != http.StatusCreated || len(signUp.Result().Cookies()) != 1 {
@@ -54,7 +54,7 @@ func TestChangePasswordCanRevokeOtherSessionsAndKeepTheUserSignedIn(t *testing.T
 
 	oldPassword := httptest.NewRecorder()
 	auth.Handler().ServeHTTP(oldPassword, newAuthRequest(
-		"/api/auth/sign-in/email",
+		"/api/auth/sign-in",
 		`{"email":"owner@example.com","password":"original password"}`,
 	))
 	if oldPassword.Code != http.StatusUnauthorized {
@@ -63,7 +63,7 @@ func TestChangePasswordCanRevokeOtherSessionsAndKeepTheUserSignedIn(t *testing.T
 
 	newPassword := httptest.NewRecorder()
 	auth.Handler().ServeHTTP(newPassword, newAuthRequest(
-		"/api/auth/sign-in/email",
+		"/api/auth/sign-in",
 		`{"email":"owner@example.com","password":"replacement password"}`,
 	))
 	if newPassword.Code != http.StatusOK {

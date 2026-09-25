@@ -157,7 +157,7 @@ func TestChallengeStoreFailureRemainsOperationalError(t *testing.T) {
 	}
 }
 
-func TestUnlinkRemovesTheRequestedGoogleAccount(t *testing.T) {
+func TestUnlinkRemovesTheGoogleAccount(t *testing.T) {
 	now := time.Date(2026, time.September, 11, 12, 0, 0, 0, time.UTC)
 	store := newStore()
 	events := &eventRecorder{}
@@ -173,15 +173,12 @@ func TestUnlinkRemovesTheRequestedGoogleAccount(t *testing.T) {
 	err := manager.Unlink(
 		context.Background(),
 		"user_123",
-		"google-account-1",
 		"client:203.0.113.10",
 	)
 	if err != nil {
 		t.Fatalf("unlink Google account: %v", err)
 	}
-	if store.unlinked.subjectID != "user_123" ||
-		store.unlinked.providerSubject != "google-account-1" ||
-		!store.unlinked.at.Equal(now) {
+	if store.unlinked.subjectID != "user_123" || !store.unlinked.at.Equal(now) {
 		t.Fatalf("unexpected unlink request: %+v", store.unlinked)
 	}
 	if len(events.events) != 1 || events.events[0].Type != googleoauth.EventUnlinked ||
@@ -195,7 +192,7 @@ func TestUnlinkCannotRemoveTheLastSignInMethod(t *testing.T) {
 	store.unlinkErr = googleoauth.ErrLastCredential
 	manager := newManager(t, store, &providerStub{})
 
-	err := manager.Unlink(context.Background(), "user_123", "google-account-1", "")
+	err := manager.Unlink(context.Background(), "user_123", "")
 	if !errors.Is(err, googleoauth.ErrLastCredential) {
 		t.Fatalf("unlink last sign-in method: got %v, want last credential", err)
 	}
@@ -276,9 +273,8 @@ type memoryStore struct {
 }
 
 type unlinkRequest struct {
-	subjectID       string
-	providerSubject string
-	at              time.Time
+	subjectID string
+	at        time.Time
 }
 
 func newStore() *memoryStore {
@@ -334,6 +330,11 @@ func (store *memoryStore) ResolveIdentity(
 		return linked, nil
 	}
 	if resolution.SubjectID != "" {
+		for _, linked := range store.identities {
+			if linked.ID == resolution.SubjectID {
+				return googleoauth.User{}, googleoauth.ErrConflict
+			}
+		}
 		user := googleoauth.User{ID: resolution.SubjectID}
 		store.identities[resolution.ProviderSubject] = user
 		return user, nil
@@ -351,36 +352,15 @@ func (store *memoryStore) ResolveIdentity(
 func (store *memoryStore) UnlinkIdentity(
 	_ context.Context,
 	subjectID string,
-	providerSubject string,
 	unlinkedAt time.Time,
 ) error {
 	store.mu.Lock()
 	defer store.mu.Unlock()
 	store.unlinked = unlinkRequest{
-		subjectID:       subjectID,
-		providerSubject: providerSubject,
-		at:              unlinkedAt,
+		subjectID: subjectID,
+		at:        unlinkedAt,
 	}
 	return store.unlinkErr
-}
-
-func (store *memoryStore) ListIdentities(
-	_ context.Context,
-	subjectID string,
-) ([]googleoauth.LinkedIdentity, error) {
-	store.mu.Lock()
-	defer store.mu.Unlock()
-	identities := make([]googleoauth.LinkedIdentity, 0)
-	for providerSubject, user := range store.identities {
-		if user.ID == subjectID {
-			identities = append(identities, googleoauth.LinkedIdentity{
-				ProviderSubject: providerSubject,
-				Email:           "owner@example.com",
-				LinkedAt:        time.Now().UTC(),
-			})
-		}
-	}
-	return identities, nil
 }
 
 func (store *memoryStore) challenge() googleoauth.Challenge {

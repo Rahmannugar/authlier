@@ -53,24 +53,18 @@ type IdentityResolution struct {
 	SubjectID       string
 }
 
-type LinkedIdentity struct {
-	ProviderSubject string
-	Email           string
-	LinkedAt        time.Time
-}
-
 type Store interface {
 	CreateChallenge(ctx context.Context, challenge Challenge) error
 	ConsumeChallenge(ctx context.Context, stateHash [32]byte, consumedAt time.Time) (Challenge, error)
-	// ResolveIdentity finds, links, or creates a user atomically. ProviderSubject
-	// is the permanent account key; an existing unlinked email returns ErrLinkRequired.
+	// ResolveIdentity finds, links, or creates a user atomically. Each user may
+	// have only one Google identity. ProviderSubject is the permanent account
+	// key; an existing unlinked email returns ErrLinkRequired.
 	ResolveIdentity(ctx context.Context, resolution IdentityResolution) (User, error)
 }
 
 // IdentityStore must atomically refuse removal of the user's last sign-in method.
 type IdentityStore interface {
-	ListIdentities(ctx context.Context, subjectID string) ([]LinkedIdentity, error)
-	UnlinkIdentity(ctx context.Context, subjectID, providerSubject string, unlinkedAt time.Time) error
+	UnlinkIdentity(ctx context.Context, subjectID string, unlinkedAt time.Time) error
 }
 
 type ExchangeInput struct {
@@ -173,21 +167,18 @@ func NewManager(store Store, provider Provider, config Config) (*Manager, error)
 func (manager *Manager) Unlink(
 	ctx context.Context,
 	subjectID string,
-	providerSubject string,
 	sourceKey string,
 ) error {
 	if manager.identities == nil {
 		return fmt.Errorf("%w: identity store is required", ErrInvalidConfig)
 	}
 	subjectID = strings.TrimSpace(subjectID)
-	providerSubject = strings.TrimSpace(providerSubject)
-	if subjectID == "" || providerSubject == "" {
+	if subjectID == "" {
 		return ErrInvalidInput
 	}
 	if err := manager.identities.UnlinkIdentity(
 		ctx,
 		subjectID,
-		providerSubject,
 		manager.now().UTC(),
 	); err != nil {
 		if errors.Is(err, ErrLastCredential) || errors.Is(err, ErrNotFound) {
@@ -197,27 +188,6 @@ func (manager *Manager) Unlink(
 	}
 	manager.record(ctx, EventUnlinked, subjectID, sourceKey)
 	return nil
-}
-
-func (manager *Manager) List(ctx context.Context, subjectID string) ([]LinkedIdentity, error) {
-	if manager.identities == nil {
-		return nil, fmt.Errorf("%w: identity store is required", ErrInvalidConfig)
-	}
-	subjectID = strings.TrimSpace(subjectID)
-	if subjectID == "" {
-		return nil, ErrInvalidInput
-	}
-	identities, err := manager.identities.ListIdentities(ctx, subjectID)
-	if err != nil {
-		return nil, fmt.Errorf("list Google identities: %w", err)
-	}
-	for _, identity := range identities {
-		if strings.TrimSpace(identity.ProviderSubject) == "" ||
-			strings.TrimSpace(identity.Email) == "" || identity.LinkedAt.IsZero() {
-			return nil, ErrInvalidRecord
-		}
-	}
-	return identities, nil
 }
 
 func (manager *Manager) Begin(ctx context.Context, subjectID string) (Started, error) {

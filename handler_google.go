@@ -3,7 +3,6 @@ package authlier
 import (
 	"errors"
 	"net/http"
-	"time"
 
 	"github.com/Rahmannugar/authlier/googleoauth"
 )
@@ -12,47 +11,11 @@ type authorizationURLResponse struct {
 	URL string `json:"url"`
 }
 
-type unlinkGoogleRequest struct {
-	ProviderSubject string `json:"providerSubject"`
-}
-
-type googleAccountDetails struct {
-	ProviderSubject string    `json:"providerSubject"`
-	Email           string    `json:"email"`
-	LinkedAt        time.Time `json:"linkedAt"`
-}
-
-type googleAccountsResponse struct {
-	Accounts []googleAccountDetails `json:"accounts"`
-}
-
-func registerGoogleRoutes(handler *httpHandler, basePath string) {
-	handler.mux.HandleFunc("POST "+basePath+"/sign-in/google", handler.signInWithGoogle)
-	handler.mux.HandleFunc("GET "+basePath+"/callback/google", handler.completeGoogleSignIn)
-	handler.mux.HandleFunc("POST "+basePath+"/link-account/google", handler.linkGoogle)
-	handler.mux.HandleFunc("GET "+basePath+"/list-accounts/google", handler.listGoogleAccounts)
-	handler.mux.HandleFunc("POST "+basePath+"/unlink-account/google", handler.unlinkGoogle)
-}
-
-func (handler *httpHandler) listGoogleAccounts(response http.ResponseWriter, request *http.Request) {
-	session, ok := handler.requireSession(response, request, false)
-	if !ok {
-		return
-	}
-	identities, err := handler.auth.google.List(request.Context(), session.SubjectID)
-	if err != nil {
-		writeGoogleError(response, err)
-		return
-	}
-	accounts := make([]googleAccountDetails, len(identities))
-	for index, identity := range identities {
-		accounts[index] = googleAccountDetails{
-			ProviderSubject: identity.ProviderSubject,
-			Email:           identity.Email,
-			LinkedAt:        identity.LinkedAt,
-		}
-	}
-	writeJSON(response, http.StatusOK, googleAccountsResponse{Accounts: accounts})
+func registerGoogleRoutes(handler *httpHandler, basePath string, accountBasePath string) {
+	handler.mux.HandleFunc("POST "+basePath+"/google", handler.signInWithGoogle)
+	handler.mux.HandleFunc("GET "+basePath+"/google/callback", handler.completeGoogleSignIn)
+	handler.mux.HandleFunc("POST "+accountBasePath+"/google", handler.linkGoogle)
+	handler.mux.HandleFunc("DELETE "+accountBasePath+"/google", handler.unlinkGoogle)
 }
 
 func (handler *httpHandler) signInWithGoogle(response http.ResponseWriter, request *http.Request) {
@@ -95,12 +58,8 @@ func (handler *httpHandler) unlinkGoogle(response http.ResponseWriter, request *
 	if !ok {
 		return
 	}
-	var input unlinkGoogleRequest
-	if !readJSON(response, request, &input) {
-		return
-	}
 	if err := handler.auth.google.Unlink(
-		request.Context(), session.SubjectID, input.ProviderSubject, handler.sourceKey(request),
+		request.Context(), session.SubjectID, handler.sourceKey(request),
 	); err != nil {
 		writeGoogleError(response, err)
 		return

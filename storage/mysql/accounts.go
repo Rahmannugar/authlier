@@ -436,6 +436,17 @@ func (store *GoogleStore) ResolveIdentity(
 		} else if err != nil {
 			return googleoauth.User{}, err
 		}
+		// The user row lock serializes account linking so one user cannot race
+		// two different Google identities into the account.
+		var existingProviderSubject string
+		err := tx.QueryRowContext(ctx, `SELECT provider_subject FROM authlier_google_identities
+			WHERE user_id = ?`, userID).Scan(&existingProviderSubject)
+		if err == nil {
+			return googleoauth.User{}, googleoauth.ErrConflict
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			return googleoauth.User{}, err
+		}
 	} else {
 		err := tx.QueryRowContext(ctx,
 			"SELECT id FROM authlier_users WHERE email = ? FOR UPDATE", resolution.Email,
@@ -472,7 +483,7 @@ func (store *GoogleStore) ResolveIdentity(
 
 func (store *GoogleStore) UnlinkIdentity(
 	ctx context.Context,
-	subjectID, providerSubject string,
+	subjectID string,
 	_ time.Time,
 ) error {
 	tx, err := store.adapter.database.BeginTx(ctx, nil)
@@ -485,11 +496,11 @@ func (store *GoogleStore) UnlinkIdentity(
 	} else if err != nil {
 		return err
 	}
-	var linkedUserID string
-	err = tx.QueryRowContext(ctx, `SELECT user_id FROM authlier_google_identities
-		WHERE provider_subject = ? FOR UPDATE`, providerSubject,
-	).Scan(&linkedUserID)
-	if errors.Is(err, sql.ErrNoRows) || linkedUserID != subjectID {
+	var providerSubject string
+	err = tx.QueryRowContext(ctx, `SELECT provider_subject FROM authlier_google_identities
+		WHERE user_id = ? FOR UPDATE`, subjectID,
+	).Scan(&providerSubject)
+	if errors.Is(err, sql.ErrNoRows) {
 		return googleoauth.ErrNotFound
 	}
 	if err != nil {
@@ -506,32 +517,11 @@ func (store *GoogleStore) UnlinkIdentity(
 		return googleoauth.ErrLastCredential
 	}
 	if _, err := tx.ExecContext(ctx, `DELETE FROM authlier_google_identities
-		WHERE provider_subject = ? AND user_id = ?`, providerSubject, subjectID,
+		WHERE user_id = ?`, subjectID,
 	); err != nil {
 		return err
 	}
 	return tx.Commit()
-}
-
-func (store *GoogleStore) ListIdentities(
-	ctx context.Context,
-	subjectID string,
-) ([]googleoauth.LinkedIdentity, error) {
-	rows, err := store.adapter.database.QueryContext(ctx, `SELECT provider_subject, email, linked_at
-		FROM authlier_google_identities WHERE user_id = ? ORDER BY linked_at`, subjectID)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	identities := make([]googleoauth.LinkedIdentity, 0)
-	for rows.Next() {
-		var identity googleoauth.LinkedIdentity
-		if err := rows.Scan(&identity.ProviderSubject, &identity.Email, &identity.LinkedAt); err != nil {
-			return nil, err
-		}
-		identities = append(identities, identity)
-	}
-	return identities, rows.Err()
 }
 
 func insertUser(

@@ -147,6 +147,7 @@ type Config struct {
 	AppName           string
 	BaseURL           string
 	BasePath          string
+	AccountBasePath   string
 	Database          Database
 	TrustedOrigins    []string
 	TrustedProxies    []string

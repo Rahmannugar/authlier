@@ -171,7 +171,7 @@ curl --include \
   --header 'Content-Type: application/json' \
   --header 'Origin: http://localhost:8080' \
   --data '{"email":"person@example.com","password":"correct horse battery staple"}' \
-  http://localhost:8080/api/auth/sign-up/email
+  http://localhost:8080/api/auth/sign-up
 ```
 
 The `Origin` header says which browser origin initiated a state-changing

@@ -23,7 +23,7 @@ type resetPasswordRequest struct {
 }
 
 func registerEmailVerificationRoutes(handler *httpHandler, basePath string) {
-	handler.mux.HandleFunc("POST "+basePath+"/send-verification-email", handler.sendVerificationEmail)
+	handler.mux.HandleFunc("POST "+basePath+"/resend-verification", handler.resendVerification)
 	if handler.auth.emailVerificationDelivery == emailverification.DeliveryMethodOTP {
 		handler.mux.HandleFunc("POST "+basePath+"/verify-email", handler.verifyEmailOTP)
 	} else {
@@ -36,7 +36,7 @@ func registerPasswordResetRoutes(handler *httpHandler, basePath string) {
 	handler.mux.HandleFunc("POST "+basePath+"/reset-password", handler.resetPassword)
 }
 
-func (handler *httpHandler) sendVerificationEmail(response http.ResponseWriter, request *http.Request) {
+func (handler *httpHandler) resendVerification(response http.ResponseWriter, request *http.Request) {
 	var input emailRequest
 	if !readJSON(response, request, &input) {
 		return
