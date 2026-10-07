@@ -6,7 +6,52 @@ import (
 	"net/http/httptest"
 	"testing"
 	"time"
+
+	"github.com/Rahmannugar/authlier/sessiontoken"
 )
+
+func TestExtendedSessionCookieUsesAbsoluteLifetime(t *testing.T) {
+	accounts := &authenticationStore{}
+	sessions := newSessionStore(time.Now().UTC())
+	auth, err := New(Config{
+		AppName: "Acme",
+		BaseURL: "https://app.example.com",
+		Database: handlerDatabase{stores: Stores{
+			EmailPassword: accounts,
+			Sessions:      sessions,
+		}},
+		EmailAndPassword: EmailAndPasswordConfig{Enabled: true},
+		Session: SessionConfig{
+			Lifetime: 7 * 24 * time.Hour,
+			Extension: &sessiontoken.ExtensionConfig{
+				ExtendAfter:      24 * time.Hour,
+				AbsoluteLifetime: 30 * 24 * time.Hour,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("create Authlier: %v", err)
+	}
+
+	signUp := httptest.NewRecorder()
+	auth.Handler().ServeHTTP(signUp, newAuthRequest(
+		"/api/auth/sign-up",
+		`{"email":"owner@example.com","password":"correct horse battery staple"}`,
+	))
+	cookies := signUp.Result().Cookies()
+	if signUp.Code != http.StatusCreated || len(cookies) != 1 {
+		t.Fatalf("sign up: status=%d body=%s", signUp.Code, signUp.Body.String())
+	}
+
+	wantCookieExpiry := sessions.record.CreatedAt.Add(30 * 24 * time.Hour).Truncate(time.Second)
+	if !cookies[0].Expires.Equal(wantCookieExpiry) {
+		t.Fatalf("cookie expiry = %v, want absolute expiry %v", cookies[0].Expires, wantCookieExpiry)
+	}
+	wantIdleExpiry := sessions.record.CreatedAt.Add(7 * 24 * time.Hour)
+	if !sessions.record.ExpiresAt.Equal(wantIdleExpiry) {
+		t.Fatalf("durable expiry = %v, want idle expiry %v", sessions.record.ExpiresAt, wantIdleExpiry)
+	}
+}
 
 func TestSessionRoutesListAndRevokeTheCurrentSessionByID(t *testing.T) {
 	accounts := &authenticationStore{}

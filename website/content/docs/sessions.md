@@ -95,6 +95,12 @@ use, Authlier may move its expiry to 24 hours from the current request. It can
 do this again while the session remains active, but never beyond 30 days from
 the original sign-in.
 
+For cookie sessions, the browser retains the opaque credential until the
+absolute lifetime. The durable session expiry remains the authoritative idle
+boundary and moves only when an eligible authenticated request extends it. A
+credential retained by the browser cannot authenticate after that durable
+session expires or is revoked.
+
 `AbsoluteLifetime` is necessary because extension would otherwise let the same
 session continue forever. It is measured from the original sign-in and never
 moves. After 30 days in this example, the user must authenticate again even if
