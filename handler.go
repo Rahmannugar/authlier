@@ -25,6 +25,7 @@ type httpHandler struct {
 	trustedProxies []netip.Prefix
 	crossSitePOSTs map[string]struct{}
 	cookie         http.Cookie
+	cookieLifetime time.Duration
 	sessionMode    SessionMode
 	mux            *http.ServeMux
 }
@@ -126,6 +127,12 @@ func newHandler(
 		},
 		sessionMode: sessionMode,
 		mux:         http.NewServeMux(),
+	}
+	if config.Session.Extension != nil {
+		// The durable expiry remains the inactivity boundary. Keep the opaque
+		// credential in the browser until the absolute boundary so a later
+		// durable extension is not cut short by the original cookie expiry.
+		handler.cookieLifetime = config.Session.Extension.AbsoluteLifetime
 	}
 	if auth.password != nil {
 		handler.mux.HandleFunc("POST "+basePath+"/sign-up", handler.signUp)
@@ -351,10 +358,18 @@ func (handler *httpHandler) session(response http.ResponseWriter, request *http.
 	writeJSON(response, http.StatusOK, sessionResponse{Session: newSessionDetails(record)})
 }
 
-func (handler *httpHandler) setSession(response http.ResponseWriter, token string, expiresAt time.Time) {
+func (handler *httpHandler) setSession(
+	response http.ResponseWriter,
+	token string,
+	createdAt time.Time,
+	expiresAt time.Time,
+) {
 	cookie := handler.cookie
 	cookie.Value = token
 	cookie.Expires = expiresAt
+	if handler.cookieLifetime > 0 {
+		cookie.Expires = createdAt.Add(handler.cookieLifetime)
+	}
 	http.SetCookie(response, &cookie)
 }
 
@@ -418,7 +433,12 @@ func (handler *httpHandler) issueSession(
 		writeError(response, http.StatusInternalServerError, "session_failed")
 		return sessionDetails{}, nil, false
 	}
-	handler.setSession(response, issued.Token, issued.Record.ExpiresAt)
+	handler.setSession(
+		response,
+		issued.Token,
+		issued.Record.CreatedAt,
+		issued.Record.ExpiresAt,
+	)
 	return newSessionDetails(Session{
 		ID: issued.Record.ID, SubjectID: issued.Record.SubjectID,
 		CreatedAt: issued.Record.CreatedAt, ExpiresAt: issued.Record.ExpiresAt,
